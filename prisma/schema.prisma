@@ -1,0 +1,151 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  SUPER_ADMIN
+  LAB_STAFF
+  BORROWER
+}
+
+enum AssetStatus {
+  RECEIVED
+  NOT_RECEIVED
+}
+
+enum ItemCondition {
+  WORKING
+  DAMAGED
+  UNDER_REPAIR
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  ISSUED
+  RETURNED
+  OVERDUE
+}
+
+model User {
+  id                 String      @id @default(uuid())
+  email              String      @unique
+  name               String
+  passwordHash       String?
+  role               Role        @default(BORROWER)
+  isApproved         Boolean     @default(false)
+  
+  // 2FA / TOTP Fields
+  twoFactorEnabled   Boolean     @default(false)
+  twoFactorSecret    String?
+
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  borrowLogs         BorrowLog[] @relation("Borrower")
+  approvedLogs       BorrowLog[] @relation("ApprovedBy")
+  issuedLogs         BorrowLog[] @relation("IssuedBy")
+  returnedLogs       BorrowLog[] @relation("ReturnedBy")
+}
+
+model VerificationToken {
+  id        String   @id @default(uuid())
+  email     String
+  token     String   @unique
+  expires   DateTime
+  createdAt DateTime @default(now())
+
+  @@unique([email, token])
+}
+
+model Lab {
+  id           String      @id @default(uuid())
+  name         String      @unique
+  coordinators String[]
+  instructors  String[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  equipment    Equipment[]
+}
+
+enum UnitStatus {
+  AVAILABLE
+  ISSUED
+}
+
+model Equipment {
+  id           String        @id @default(uuid())
+  name         String
+  quantity     Int           @default(1)
+  availableQuantity Int           @default(1) 
+  status       AssetStatus   @default(RECEIVED)
+  brand        String?
+  model        String?
+  serialNumber String?
+  condition    ItemCondition @default(WORKING)
+  remarks      String?
+
+  labId        String
+  lab          Lab           @relation(fields: [labId], references: [id], onDelete: Cascade)
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  borrowLogs   BorrowLog[]
+  units     EquipmentUnit[]
+}
+
+model BorrowLog {
+  id          String        @id @default(uuid())
+  userId      String
+  user        User          @relation("Borrower", fields: [userId], references: [id])
+
+  equipmentId String
+  equipment   Equipment     @relation(fields: [equipmentId], references: [id])
+
+  unitId       String?
+  unit         EquipmentUnit? @relation(fields: [unitId], references: [id])
+
+
+  approvedById String?
+  approvedBy   User?        @relation("ApprovedBy", fields: [approvedById], references: [id])
+
+  issuedById   String?
+  issuedBy     User?        @relation("IssuedBy", fields: [issuedById], references: [id])
+
+  returnedById String?
+  returnedBy   User?        @relation("ReturnedBy", fields: [returnedById], references: [id])
+
+  
+  borrowDate  DateTime
+  returnDate  DateTime
+  actualReturn DateTime?
+  status      RequestStatus @default(PENDING)
+  notes       String?
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+model EquipmentUnit {
+  id           String        @id @default(uuid())
+  equipmentId  String
+  equipment    Equipment     @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+
+  serialNumber String        @unique
+  status       UnitStatus    @default(AVAILABLE)
+  condition    ItemCondition @default(WORKING)
+  assetStatus  AssetStatus   @default(RECEIVED)
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  borrowLogs   BorrowLog[]
+}

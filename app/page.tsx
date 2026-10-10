@@ -1,65 +1,115 @@
-import Image from "next/image";
+import { getEquipment, getLabs } from '@/actions/equipment';
+import AddEquipmentModal from '@/components/AddEquipmentModal';
+import { getSession, logoutSession } from '@/lib/auth';
+import { redirect } from 'next/navigation';
+import Link from 'next/link';
 
-export default function Home() {
+export default async function HomePage() {
+  const session = await getSession();
+
+  // Redirect unauthenticated users to login
+  if (!session) {
+    redirect('/login');
+  }
+
+  const equipmentRes = await getEquipment();
+  const labsRes = await getLabs();
+
+  const items = equipmentRes.data || [];
+  const labs = labsRes.data || [];
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+    <main className="min-h-screen bg-slate-50 p-8 font-sans">
+      <div className="max-w-5xl mx-auto space-y-8">
+        
+        
+
+        {/* Dashboard Title Header */}
+        <header className="border-b border-slate-200 pb-4 flex justify-between items-center">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900">
+              Ruhuna Engineering — IMS
+            </h1>
+            <p className="text-slate-600 mt-1">
+              Department Asset Management System
+            </p>
+          </div>
+
+          {/* Only SUPER_ADMIN and LAB_STAFF can add new equipment */}
+          {(session.role === 'SUPER_ADMIN' || session.role === 'LAB_STAFF') && (
+            <AddEquipmentModal labs={labs.map((l) => ({ id: l.id, name: l.name }))} />
+          )}
+        </header>
+
+        {/* Labs Overview Cards */}
+        <section className="space-y-4">
+          <h2 className="text-xl font-semibold text-slate-800">
+            Active Laboratories ({labs.length})
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {labs.map((lab) => (
+              <div
+                key={lab.id}
+                className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow"
+              >
+                <h3 className="font-bold text-slate-900 text-lg">{lab.name}</h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Coordinators: {lab.coordinators.length > 0
+                  ? lab.coordinators.map((c) => c.name).join(', ')
+                  : 'None assigned'}
+                </p>
+                <div className="mt-4 text-sm font-medium text-blue-600">
+                  {lab._count.equipment} Equipment Items Registered
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* Live Database Items Table */}
+        <section className="space-y-4">
+          <h2 className="text-xl font-semibold text-slate-800">
+            Live Inventory Items ({items.length})
+          </h2>
+          <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+            <table className="w-full text-left border-collapse text-sm">
+              <thead className="bg-slate-100 text-slate-700 font-semibold border-b border-slate-200">
+                <tr>
+                  <th className="p-4">Equipment Name</th>
+                  <th className="p-4">Brand / Model</th>
+                  <th className="p-4">Laboratory</th>
+                  <th className="p-4">Status</th>
+                  <th className="p-4">Qty</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-slate-800">
+                {items.map((item) => (
+                  <tr key={item.id} className="hover:bg-slate-50">
+                    <td className="p-4 font-medium">{item.name}</td>
+                    <td className="p-4 text-slate-600">
+                      {item.brand || 'N/A'} {item.model ? `(${item.model})` : ''}
+                    </td>
+                    <td className="p-4 text-slate-600">{item.lab.name}</td>
+                    <td className="p-4">
+                      <span
+                        className={`inline-block px-2.5 py-1 rounded-full text-xs font-semibold ${
+                          item.status === 'RECEIVED'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        {item.status}
+                      </span>
+                    </td>
+                    <td className="p-4 font-semibold">{item.quantity}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+      </div>
+    </main>
   );
 }
