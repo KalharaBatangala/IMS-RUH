@@ -7,10 +7,13 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// Account-level role: decides which KINDS of action a person may perform.
+// Which LAB they may act in is decided separately by an active LabAssignment.
 enum Role {
   SUPER_ADMIN
-  LAB_STAFF
+  COORDINATOR       // academic staff: reviews / recommends requests (was LAB_STAFF)
   BORROWER
+  TECHNICAL_OFFICER // non-academic staff: physical issue and return
 }
 
 enum AssetStatus {
@@ -25,12 +28,14 @@ enum ItemCondition {
 }
 
 enum RequestStatus {
-  PENDING
-  APPROVED
+  PENDING   // submitted, awaiting Coordinator decision
+  APPROVED  // "recommended" by the Coordinator; a specific unit is Reserved
   REJECTED
-  ISSUED
+  ISSUED    // physical handover recorded by a TO
   RETURNED
-  OVERDUE
+  OVERDUE   // still an active loan (unit stays Issued) past its return date
+  CANCELLED // cancelled before physical issue
+  EXPIRED   // recommended reservation not collected before its deadline
 }
 
 model User {
@@ -40,7 +45,13 @@ model User {
   passwordHash       String?
   role               Role        @default(BORROWER)
   isApproved         Boolean     @default(false)
-  
+  // Deactivation is separate from approval and from lab assignment.
+  isActive           Boolean     @default(true)
+  // Incremented whenever role / status changes so existing sessions are invalidated.
+  sessionVersion     Int         @default(0)
+  failedLoginCount   Int         @default(0)
+  lockedUntil        DateTime?
+
   // 2FA / TOTP Fields
   twoFactorEnabled   Boolean     @default(false)
   twoFactorSecret    String?
@@ -52,8 +63,20 @@ model User {
   approvedLogs       BorrowLog[] @relation("ApprovedBy")
   issuedLogs         BorrowLog[] @relation("IssuedBy")
   returnedLogs       BorrowLog[] @relation("ReturnedBy")
+  rejectedLogs       BorrowLog[] @relation("RejectedBy")
+  cancelledLogs      BorrowLog[] @relation("CancelledBy")
+  returnStartedLogs  BorrowLog[] @relation("ReturnInitiatedBy")
+  returnOverrideLogs BorrowLog[] @relation("ReturnAckOverrideBy")
+
+  labAssignments     LabAssignment[] @relation("AssignedUser")
+  assignmentsMade    LabAssignment[] @relation("AssignedBy")
+  assignmentsEnded   LabAssignment[] @relation("UnassignedBy")
+  codesCreated       ConfirmationCode[]
+  auditEvents        AuditLog[]
+  notifications      Notification[]
 }
 
+// Legacy / unused (kept until removal is approved).
 model VerificationToken {
   id        String   @id @default(uuid())
   email     String
@@ -67,30 +90,67 @@ model VerificationToken {
 model Lab {
   id           String      @id @default(uuid())
   name         String      @unique
+  description  String?
+  // LEGACY: User IDs of coordinators. Migrated into LabAssignment; no longer read by the app.
   coordinators String[]
+  // LEGACY: plain-text names. No longer read by the app.
   instructors  String[]
+  archivedAt   DateTime?
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
   equipment    Equipment[]
+  assignments  LabAssignment[]
 }
 
+enum AssignmentRole {
+  COORDINATOR
+  TECHNICAL_OFFICER
+}
+
+// One row per assignment period. Active while unassignedAt is null.
+// Rows are never deleted so historical responsibility stays visible.
+model LabAssignment {
+  id             String         @id @default(uuid())
+  labId          String
+  lab            Lab            @relation(fields: [labId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User           @relation("AssignedUser", fields: [userId], references: [id])
+  role           AssignmentRole
+
+  assignedAt     DateTime       @default(now())
+  assignedById   String?
+  assignedBy     User?          @relation("AssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+  unassignedAt   DateTime?
+  unassignedById String?
+  unassignedBy   User?          @relation("UnassignedBy", fields: [unassignedById], references: [id], onDelete: SetNull)
+
+  @@index([labId, unassignedAt])
+  @@index([userId, unassignedAt])
+}
+
+// Allocation state of a physical unit. Changed ONLY by the borrow workflow,
+// always together with EquipmentUnit.currentLogId.
 enum UnitStatus {
   AVAILABLE
   ISSUED
+  RESERVED
 }
 
 model Equipment {
   id           String        @id @default(uuid())
   name         String
+  // LEGACY columns (quantity, availableQuantity, status, serialNumber, condition):
+  // counts and state now come from EquipmentUnit rows. Not read by the app.
   quantity     Int           @default(1)
-  availableQuantity Int           @default(1) 
+  availableQuantity Int           @default(1)
   status       AssetStatus   @default(RECEIVED)
   brand        String?
   model        String?
   serialNumber String?
   condition    ItemCondition @default(WORKING)
   remarks      String?
+  archivedAt   DateTime?
 
   labId        String
   lab          Lab           @relation(fields: [labId], references: [id], onDelete: Cascade)
@@ -110,20 +170,49 @@ model BorrowLog {
   equipmentId String
   equipment   Equipment     @relation(fields: [equipmentId], references: [id])
 
+  // Assigned when the Coordinator recommends (reserves) a specific unit.
   unitId       String?
-  unit         EquipmentUnit? @relation(fields: [unitId], references: [id])
+  unit         EquipmentUnit? @relation("LogUnit", fields: [unitId], references: [id])
+  // Back-reference from the unit while this log holds it (reserved or issued).
+  holdingUnit  EquipmentUnit? @relation("UnitCurrentLog")
 
-
+  // Recommendation ("approval") by the Coordinator
   approvedById String?
   approvedBy   User?        @relation("ApprovedBy", fields: [approvedById], references: [id])
+  approvedAt   DateTime?
+  reservationExpiresAt DateTime?
+
+  rejectedById    String?
+  rejectedBy      User?     @relation("RejectedBy", fields: [rejectedById], references: [id])
+  rejectedAt      DateTime?
+  rejectionReason String?
+
+  cancelledById String?
+  cancelledBy   User?       @relation("CancelledBy", fields: [cancelledById], references: [id])
+  cancelledAt   DateTime?
+  cancelReason  String?
+
+  expiredAt     DateTime?
 
   issuedById   String?
   issuedBy     User?        @relation("IssuedBy", fields: [issuedById], references: [id])
+  issuedAt     DateTime?
+  issueNotes   String?
+
+  // Return: TO inspects -> return code -> borrower acknowledges -> TO finalizes
+  returnInitiatedById String?
+  returnInitiatedBy   User?          @relation("ReturnInitiatedBy", fields: [returnInitiatedById], references: [id])
+  returnInitiatedAt   DateTime?
+  returnCondition     ItemCondition?
+  returnNotes         String?
+  returnAcknowledgedAt DateTime?
+  returnAckOverrideById String?
+  returnAckOverrideBy   User?        @relation("ReturnAckOverrideBy", fields: [returnAckOverrideById], references: [id])
+  returnAckOverrideReason String?
 
   returnedById String?
   returnedBy   User?        @relation("ReturnedBy", fields: [returnedById], references: [id])
 
-  
   borrowDate  DateTime
   returnDate  DateTime
   actualReturn DateTime?
@@ -132,6 +221,12 @@ model BorrowLog {
 
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
+
+  codes       ConfirmationCode[]
+
+  @@index([status])
+  @@index([userId])
+  @@index([equipmentId])
 }
 
 model EquipmentUnit {
@@ -139,13 +234,83 @@ model EquipmentUnit {
   equipmentId  String
   equipment    Equipment     @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
 
+  // Manufacturer serial, or a system-generated asset tag when the item has none
+  // (serialIsPlaceholder = true). Unique, so each physical unit is identifiable at issue.
   serialNumber String        @unique
+  serialIsPlaceholder Boolean @default(false)
   status       UnitStatus    @default(AVAILABLE)
   condition    ItemCondition @default(WORKING)
   assetStatus  AssetStatus   @default(RECEIVED)
+  // Why the unit is unavailable (set by staff or by a damaged return). Cleared when fit again.
+  unavailableReason String?
+  // Persistent free-text remark about this unit (kept regardless of condition).
+  notes        String?
+  // Where the unit physically is when not on loan (e.g. "Stores Room").
+  location     String?
+  purchasedAt  DateTime?
+  // Last physical stock check.
+  lastCheckedAt DateTime?
+  archivedAt   DateTime?
+
+  // The single request/loan currently holding this unit (RESERVED or ISSUED).
+  // Unique: a log can hold at most one unit and vice versa.
+  currentLogId String?       @unique
+  currentLog   BorrowLog?    @relation("UnitCurrentLog", fields: [currentLogId], references: [id], onDelete: SetNull)
 
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
-  borrowLogs   BorrowLog[]
+  borrowLogs   BorrowLog[]   @relation("LogUnit")
+}
+
+enum CodePurpose {
+  HANDOVER
+  RETURN
+}
+
+// One-time confirmation codes. Only an HMAC of the code is stored.
+model ConfirmationCode {
+  id            String      @id @default(uuid())
+  logId         String
+  log           BorrowLog   @relation(fields: [logId], references: [id], onDelete: Cascade)
+  purpose       CodePurpose
+  codeHash      String
+  expiresAt     DateTime
+  attempts      Int         @default(0)
+  consumedAt    DateTime?
+  invalidatedAt DateTime?
+  createdById   String?
+  createdBy     User?       @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime    @default(now())
+
+  @@index([logId, purpose])
+}
+
+// Append-only record of important actions. The app never updates or deletes rows.
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String
+  entityId   String?
+  labId      String?
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entityType, entityId])
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
 }

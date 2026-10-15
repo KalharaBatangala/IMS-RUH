@@ -2,273 +2,282 @@
 
 import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
-import { setSessionCookie, logoutSession, getSession } from '@/lib/auth';
 import { generateSecret, generateURI, verify } from 'otplib';
 import QRCode from 'qrcode';
 import { revalidatePath } from 'next/cache';
+import {
+  getPendingTwoFactorUser,
+  getSession,
+  logoutSession,
+  requireSession,
+  requireSuperAdmin,
+  setSessionCookie,
+} from '@/lib/auth';
+import { ALLOWED_EMAIL_DOMAINS, POLICY } from '@/lib/config';
+import { ActionError, requireText, toActionError } from '@/lib/errors';
+import { audit } from '@/lib/audit';
+import { notify } from '@/lib/notify';
 
-const ALLOWED_DOMAINS = ['@eie.ruh.ac.lk', '@eng.ruh.ac.lk'];
+// Used to keep login timing similar whether or not the account exists.
+const DUMMY_HASH = bcrypt.hashSync('timing-equaliser-not-a-real-password', 10);
+
+function validatePassword(password: unknown): string {
+  if (typeof password !== 'string' || password.length < POLICY.minPasswordLength) {
+    throw new ActionError(`Password must be at least ${POLICY.minPasswordLength} characters long.`);
+  }
+  if (password.length > 128) throw new ActionError('Password is too long.');
+  return password;
+}
 
 // -------------------------------------------------------------
 // 1. User Registration (Admin Approval Required)
 // -------------------------------------------------------------
-export async function registerUser(formData: {
-  name: string;
-  email: string;
-  password: string;
-}) {
+export async function registerUser(formData: { name: string; email: string; password: string }) {
   try {
-    const email = formData.email.trim().toLowerCase();
+    const email = requireText(formData.email, 'Email', 200).toLowerCase();
+    const name = requireText(formData.name, 'Full name', 120);
+    const password = validatePassword(formData.password);
 
-    // Check allowed university domains
-    const isValidDomain = ALLOWED_DOMAINS.some((domain) => email.endsWith(domain));
-    if (!isValidDomain) {
-      return {
-        success: false,
-        error: 'Only official university emails (@eie.ruh.ac.lk or @eng.ruh.ac.lk) are allowed.',
-      };
-    }
-
-    if (formData.password.length < 6) {
-      return { success: false, error: 'Password must be at least 6 characters long.' };
+    if (!ALLOWED_EMAIL_DOMAINS.some((domain) => email.endsWith(domain))) {
+      throw new ActionError('Only official university emails (@eie.ruh.ac.lk or @eng.ruh.ac.lk) are allowed.');
     }
 
     const existingUser = await prisma.user.findUnique({ where: { email } });
-    const passwordHash = await bcrypt.hash(formData.password, 10);
-
     if (existingUser) {
-      // If user was pre-seeded with no password (e.g. initial super admins)
-      if (!existingUser.passwordHash) {
-        const updatedUser = await prisma.user.update({
-          where: { email },
-          data: {
-            name: formData.name,
-            passwordHash,
-            isApproved: true, // Pre-seeded admins auto-approved
-          },
-        });
-
-        await setSessionCookie({
-          userId: updatedUser.id,
-          email: updatedUser.email,
-          name: updatedUser.name,
-          role: updatedUser.role,
-          twoFactorVerified: false,
-        });
-
-        return { success: true, message: 'Account initialized successfully!' };
-      }
-
-      return { success: false, error: 'An account with this email already exists.' };
+      // Pre-created accounts are NOT initialised through public registration any more
+      // (anyone could have claimed them). The Super Admin sets a temporary password instead.
+      throw new ActionError('An account with this email already exists. Contact the system administrator if you cannot sign in.');
     }
 
-    // Create new standard borrower (Default: isApproved = false)
-    await prisma.user.create({
-      data: {
-        name: formData.name,
-        email,
-        passwordHash,
-        role: 'BORROWER',
-        isApproved: false, // Pending Admin Approval
-      },
+    const user = await prisma.user.create({
+      data: { name, email, passwordHash: await bcrypt.hash(password, 10), role: 'BORROWER', isApproved: false },
+    });
+    await audit(prisma, { actorId: user.id, action: 'USER_REGISTERED', entityType: 'User', entityId: user.id });
+
+    const admins = await prisma.user.findMany({ where: { role: 'SUPER_ADMIN', isActive: true }, select: { id: true } });
+    await notify(admins.map((a) => a.id), {
+      title: 'New registration awaiting approval',
+      body: `${name} (${email}) registered and is waiting for approval.`,
+      link: '/dashboard/admin/users',
     });
 
     return {
-      success: true,
-      message: 'Registration successful! Your account is pending admin approval. You can log in once approved by a lab administrator.',
+      success: true as const,
+      message: 'Registration successful! Your account is pending admin approval. You can log in once approved.',
     };
   } catch (error) {
-    console.error('Registration Error:', error);
-    return { success: false, error: 'Registration failed.' };
+    return toActionError(error, 'Registration failed.');
   }
 }
 
 // -------------------------------------------------------------
-// 2. Credentials Login (Blocked if unapproved)
+// 2. Credentials Login (throttled; blocked if unapproved / inactive)
 // -------------------------------------------------------------
-export async function loginUser(formData: { email: string; password: string }) {
-  try {
-    const email = formData.email.trim().toLowerCase();
-    const user = await prisma.user.findUnique({ where: { email } });
-
-    if (!user || !user.passwordHash) {
-      return { success: false, error: 'Invalid credentials or account not registered yet.' };
-    }
-
-    const passwordValid = await bcrypt.compare(formData.password, user.passwordHash);
-    if (!passwordValid) {
-      return { success: false, error: 'Invalid email or password.' };
-    }
-
-    // Block unapproved accounts from logging in
-    if (!user.isApproved) {
-      return {
-        success: false,
-        error: 'Your account is pending admin approval. Please contact a lab administrator.',
-      };
-    }
-
-    // If 2FA is enabled, return 2FA requirement flag
-    if (user.twoFactorEnabled) {
-      await setSessionCookie({
-        userId: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        twoFactorVerified: false, // Pending 2FA verification
-      });
-      return { success: true, require2FA: true };
-    }
-
-    // Standard session login
-    await setSessionCookie({
-      userId: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      twoFactorVerified: true,
-    });
-
-    return { success: true, require2FA: false };
-  } catch (error) {
-    console.error('Login Error:', error);
-    return { success: false, error: 'Login failed.' };
-  }
-}
-
-// -------------------------------------------------------------
-// 3. Admin Approval Server Actions
-// -------------------------------------------------------------
-
-// Fetch pending users for Admin/Lab Staff dashboard
-export async function getPendingUsers() {
-  const session = await getSession();
-  if (!session || (session.role !== 'LAB_STAFF' && session.role !== 'SUPER_ADMIN')) {
-    return { success: false, error: 'Unauthorized' };
-  }
-
-  const users = await prisma.user.findMany({
-    where: { isApproved: false },
-    select: { id: true, name: true, email: true, role: true, createdAt: true },
-    orderBy: { createdAt: 'desc' },
-  });
-
-  return { success: true, users };
-}
-
-// Approve a pending user
-export async function approveUser(userId: string) {
-  const session = await getSession();
-  if (!session || (session.role !== 'LAB_STAFF' && session.role !== 'SUPER_ADMIN')) {
-    return { success: false, error: 'Unauthorized' };
-  }
-
+async function recordFailedLogin(userId: string, failedLoginCount: number) {
+  const failures = failedLoginCount + 1;
+  const lock = failures >= POLICY.loginMaxFailures;
   await prisma.user.update({
     where: { id: userId },
-    data: { isApproved: true },
+    data: lock
+      ? { failedLoginCount: 0, lockedUntil: new Date(Date.now() + POLICY.loginLockoutMs) }
+      : { failedLoginCount: failures },
   });
+  if (lock) {
+    await audit(prisma, { actorId: null, action: 'LOGIN_LOCKED', entityType: 'User', entityId: userId });
+  }
+}
 
-  revalidatePath('/dashboard/admin/users');
-  return { success: true, message: 'User approved successfully!' };
+export async function loginUser(formData: { email: string; password: string }) {
+  try {
+    const email = String(formData.email ?? '').trim().toLowerCase();
+    const password = String(formData.password ?? '');
+    const user = await prisma.user.findUnique({ where: { email } });
+
+    if (user?.lockedUntil && user.lockedUntil > new Date()) {
+      throw new ActionError('Too many failed attempts. Please try again later.');
+    }
+
+    const passwordValid = await bcrypt.compare(password, user?.passwordHash ?? DUMMY_HASH);
+    if (!user || !user.passwordHash || !passwordValid) {
+      if (user) await recordFailedLogin(user.id, user.failedLoginCount);
+      throw new ActionError('Invalid email or password.');
+    }
+    if (!user.isActive) throw new ActionError('This account has been deactivated. Please contact the administrator.');
+    if (!user.isApproved) {
+      throw new ActionError('Your account is pending admin approval. Please contact the administrator.');
+    }
+
+    if (user.failedLoginCount > 0 || user.lockedUntil) {
+      await prisma.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: null } });
+    }
+
+    await setSessionCookie({
+      userId: user.id,
+      role: user.role,
+      sessionVersion: user.sessionVersion,
+      twoFactorVerified: !user.twoFactorEnabled, // pending until TOTP is verified
+    });
+    return { success: true as const, require2FA: user.twoFactorEnabled };
+  } catch (error) {
+    return toActionError(error, 'Login failed.');
+  }
 }
 
 // -------------------------------------------------------------
-// 4. Generate 2FA Secret & QR Code (Google Authenticator)
+// 3. Admin approval of registrations (Super Admin only)
+// -------------------------------------------------------------
+export async function getPendingUsers() {
+  try {
+    await requireSuperAdmin();
+    const users = await prisma.user.findMany({
+      where: { isApproved: false },
+      select: { id: true, name: true, email: true, role: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return { success: true as const, users };
+  } catch (error) {
+    return toActionError(error, 'Failed to load pending users.');
+  }
+}
+
+export async function approveUser(userId: string) {
+  try {
+    const session = await requireSuperAdmin();
+    const res = await prisma.user.updateMany({
+      where: { id: String(userId), isApproved: false },
+      data: { isApproved: true, sessionVersion: { increment: 1 } },
+    });
+    if (res.count !== 1) throw new ActionError('User not found or already approved.');
+    await audit(prisma, { actorId: session.userId, action: 'USER_APPROVED', entityType: 'User', entityId: userId });
+    await notify([userId], { title: 'Account approved', body: 'Your Ruhuna IMS account has been approved.', link: '/dashboard/inventory' });
+    revalidatePath('/dashboard/admin/users');
+    revalidatePath('/dashboard/users');
+    return { success: true as const, message: 'User approved successfully!' };
+  } catch (error) {
+    return toActionError(error, 'Failed to approve user.');
+  }
+}
+
+// -------------------------------------------------------------
+// 4. 2FA (Google Authenticator / any TOTP app)
 // -------------------------------------------------------------
 export async function setup2FA() {
-  const session = await getSession();
-  if (!session) return { success: false, error: 'Not authenticated.' };
+  try {
+    const session = await requireSession();
+    if (session.twoFactorEnabled) throw new ActionError('Two-factor authentication is already enabled.');
 
-  const secret = generateSecret();
-  const otpauth = generateURI({
-    issuer: 'Ruhuna IMS',
-    label: session.email,
-    secret,
-  });
+    const secret = generateSecret();
+    const otpauth = generateURI({ issuer: 'Ruhuna IMS', label: session.email, secret });
+    const qrCodeUrl = await QRCode.toDataURL(otpauth); // generated locally, no network call
 
-  const qrCodeUrl = await QRCode.toDataURL(otpauth);
-
-  await prisma.user.update({
-    where: { id: session.userId },
-    data: { twoFactorSecret: secret },
-  });
-
-  return { success: true, qrCodeUrl, secret };
+    await prisma.user.update({ where: { id: session.userId }, data: { twoFactorSecret: secret } });
+    return { success: true as const, qrCodeUrl, secret };
+  } catch (error) {
+    return toActionError(error, 'Failed to start 2FA setup.');
+  }
 }
 
-// -------------------------------------------------------------
-// 5. Verify & Enable 2FA
-// -------------------------------------------------------------
 export async function verifyAndEnable2FA(token: string) {
-  const session = await getSession();
-  if (!session) return { success: false, error: 'Not authenticated.' };
+  try {
+    const session = await requireSession();
+    const user = await prisma.user.findUnique({ where: { id: session.userId } });
+    if (!user || !user.twoFactorSecret) throw new ActionError('2FA setup was not initiated.');
+    if (user.twoFactorEnabled) throw new ActionError('Two-factor authentication is already enabled.');
 
-  const user = await prisma.user.findUnique({ where: { id: session.userId } });
-  if (!user || !user.twoFactorSecret) {
-    return { success: false, error: '2FA setup was not initiated.' };
+    const { valid } = await verify({ token: String(token ?? '').trim(), secret: user.twoFactorSecret });
+    if (!valid) throw new ActionError('Invalid 6-digit code. Please try again.');
+
+    // Enabling 2FA signs out other sessions (sessionVersion++), then re-issues this one.
+    const updated = await prisma.user.update({
+      where: { id: session.userId },
+      data: { twoFactorEnabled: true, sessionVersion: { increment: 1 } },
+    });
+    await setSessionCookie({ userId: updated.id, role: updated.role, sessionVersion: updated.sessionVersion, twoFactorVerified: true });
+    await audit(prisma, { actorId: session.userId, action: 'TWO_FACTOR_ENABLED', entityType: 'User', entityId: session.userId });
+
+    revalidatePath('/dashboard/account');
+    return { success: true as const, message: '2FA successfully enabled!' };
+  } catch (error) {
+    return toActionError(error, 'Failed to enable 2FA.');
   }
-
-  const { valid } = await verify({
-    token: token.trim(),
-    secret: user.twoFactorSecret,
-  });
-
-  if (!valid) {
-    return { success: false, error: 'Invalid 6-digit code. Please try again.' };
-  }
-
-  await prisma.user.update({
-    where: { id: session.userId },
-    data: { twoFactorEnabled: true },
-  });
-
-  await setSessionCookie({
-    ...session,
-    twoFactorVerified: true,
-  });
-
-  revalidatePath('/dashboard');
-  return { success: true, message: '2FA successfully enabled!' };
 }
 
-// -------------------------------------------------------------
-// 6. Verify 2FA on Login
-// -------------------------------------------------------------
+export async function disable2FA(token: string) {
+  try {
+    const session = await requireSession();
+    const user = await prisma.user.findUnique({ where: { id: session.userId } });
+    if (!user?.twoFactorEnabled || !user.twoFactorSecret) throw new ActionError('2FA is not enabled.');
+    const { valid } = await verify({ token: String(token ?? '').trim(), secret: user.twoFactorSecret });
+    if (!valid) throw new ActionError('Invalid 6-digit code.');
+
+    const updated = await prisma.user.update({
+      where: { id: session.userId },
+      data: { twoFactorEnabled: false, twoFactorSecret: null, sessionVersion: { increment: 1 } },
+    });
+    await setSessionCookie({ userId: updated.id, role: updated.role, sessionVersion: updated.sessionVersion, twoFactorVerified: true });
+    await audit(prisma, { actorId: session.userId, action: 'TWO_FACTOR_DISABLED', entityType: 'User', entityId: session.userId });
+    revalidatePath('/dashboard/account');
+    return { success: true as const, message: '2FA disabled.' };
+  } catch (error) {
+    return toActionError(error, 'Failed to disable 2FA.');
+  }
+}
+
 export async function verify2FALogin(token: string) {
-  const session = await getSession();
-  if (!session) return { success: false, error: 'Session expired. Please log in again.' };
+  try {
+    const user = await getPendingTwoFactorUser();
+    if (!user || !user.twoFactorSecret) throw new ActionError('Session expired. Please log in again.');
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
+      throw new ActionError('Too many failed attempts. Please try again later.');
+    }
 
-  const user = await prisma.user.findUnique({ where: { id: session.userId } });
-  if (!user || !user.twoFactorSecret) {
-    return { success: false, error: '2FA is not configured.' };
+    const { valid } = await verify({ token: String(token ?? '').trim(), secret: user.twoFactorSecret });
+    if (!valid) {
+      await recordFailedLogin(user.id, user.failedLoginCount);
+      throw new ActionError('Invalid 6-digit code.');
+    }
+
+    if (user.failedLoginCount > 0) {
+      await prisma.user.update({ where: { id: user.id }, data: { failedLoginCount: 0 } });
+    }
+    await setSessionCookie({ userId: user.id, role: user.role, sessionVersion: user.sessionVersion, twoFactorVerified: true });
+    return { success: true as const };
+  } catch (error) {
+    return toActionError(error, '2FA verification failed.');
   }
-
-  const { valid } = await verify({
-    token: token.trim(),
-    secret: user.twoFactorSecret,
-  });
-
-  if (!valid) {
-    return { success: false, error: 'Invalid 6-digit code.' };
-  }
-
-  await setSessionCookie({
-    ...session,
-    twoFactorVerified: true,
-  });
-
-  return { success: true };
 }
 
 // -------------------------------------------------------------
-// 7. Logout
+// 5. Password change (self)
+// -------------------------------------------------------------
+export async function changePassword(currentPassword: string, newPassword: string) {
+  try {
+    const session = await requireSession();
+    const user = await prisma.user.findUnique({ where: { id: session.userId } });
+    if (!user?.passwordHash || !(await bcrypt.compare(String(currentPassword ?? ''), user.passwordHash))) {
+      throw new ActionError('Current password is incorrect.');
+    }
+    const password = validatePassword(newPassword);
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: { passwordHash: await bcrypt.hash(password, 10), sessionVersion: { increment: 1 } },
+    });
+    await setSessionCookie({ userId: updated.id, role: updated.role, sessionVersion: updated.sessionVersion, twoFactorVerified: true });
+    await audit(prisma, { actorId: user.id, action: 'PASSWORD_CHANGED', entityType: 'User', entityId: user.id });
+    return { success: true as const, message: 'Password changed. Other sessions have been signed out.' };
+  } catch (error) {
+    return toActionError(error, 'Failed to change password.');
+  }
+}
+
+// -------------------------------------------------------------
+// 6. Logout
 // -------------------------------------------------------------
 export async function logout() {
   await logoutSession();
 }
 
-// actions/auth.ts — 
 export async function getCurrentUserRole() {
   const session = await getSession();
-  return { role: session?.role ?? null };
+  return { role: session?.role ?? null, userId: session?.userId ?? null };
 }

@@ -1,24 +1,19 @@
 import { NextResponse } from 'next/server';
-import { checkAndUpdateOverdueLogs } from '@/actions/cron';
+import { runMaintenance } from '@/lib/borrow-workflow';
 
+// For a scheduled task on the server (e.g. Windows Task Scheduler calling this URL).
+// Disabled unless CRON_SECRET is configured.
 export async function GET(request: Request) {
-  // Optional: Verify CRON_SECRET header for security in production
-  const authHeader = request.headers.get('authorization');
-  if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || request.headers.get('authorization') !== `Bearer ${secret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const result = await checkAndUpdateOverdueLogs();
-  
-  if (result.success) {
-    return NextResponse.json({ 
-      status: 'ok', 
-      updatedCount: result.updatedCount 
-    });
-  } else {
-    return NextResponse.json({ 
-      status: 'error', 
-      error: result.error 
-    }, { status: 500 });
+  try {
+    const result = await runMaintenance();
+    return NextResponse.json({ status: 'ok', updatedCount: result.overdue, expiredCount: result.expired });
+  } catch (error) {
+    console.error('[cron] maintenance failed', error);
+    return NextResponse.json({ status: 'error' }, { status: 500 });
   }
 }

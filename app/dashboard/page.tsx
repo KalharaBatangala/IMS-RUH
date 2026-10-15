@@ -1,56 +1,78 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getDashboardStats } from '@/actions/dashboard';
 import Link from 'next/link';
+import { getDashboardStats } from '@/actions/dashboard';
+import { RequestStatusBadge } from '@/components/StatusBadge';
 
-interface DashboardData {
-  stats: {
-    totalEquipment: number;
-    totalLabs: number;
-    pendingRequests: number;
-    activeLoans: number;
-    overdueLoans: number;
-  };
-  recentLogs: Array<{
-    id: string;
-    status: string;
-    borrowDate: string;
-    returnDate: string;
-    user: { name: string; email: string };
-    equipment: { name: string; lab: { name: string } };
-  }>;
-}
+type DashboardData = Extract<Awaited<ReturnType<typeof getDashboardStats>>, { success: true }>;
 
 export default function DashboardOverviewPage() {
   const [data, setData] = useState<DashboardData | null>(null);
+  const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  async function loadStats() {
-    setLoading(true);
-    const res = await getDashboardStats();
-    if (res.success && res.stats && res.recentLogs) {
-      setData({
-        stats: res.stats,
-        recentLogs: res.recentLogs as any,
-      });
-    }
+  function applyStats(res: Awaited<ReturnType<typeof getDashboardStats>>) {
+    if (res.success) setData(res);
+    else setError(res.error);
     setLoading(false);
   }
 
-  useEffect(() => {
-    loadStats();
-  }, []);
-
-  if (loading) {
-    return (
-      <div className="p-6 text-center text-slate-500 text-sm font-sans">
-        Loading dashboard metrics...
-      </div>
-    );
+  async function loadStats() {
+    setLoading(true);
+    applyStats(await getDashboardStats());
   }
 
-  const stats = data?.stats;
+  useEffect(() => {
+    getDashboardStats().then(applyStats);
+  }, []);
+
+  if (loading && !data) {
+    return <div className="p-6 text-center text-slate-500 text-sm font-sans">Loading dashboard metrics...</div>;
+  }
+  if (!data) {
+    return <div className="p-6 text-center text-rose-600 text-sm font-sans">{error}</div>;
+  }
+
+  const { stats, role, scope } = data;
+  const reviewLabel = role === 'COORDINATOR' ? 'Review requests' : 'View requests';
+
+  const cards = [
+    {
+      title: 'Pending Requests',
+      color: 'text-amber-600',
+      value: stats.pendingRequests,
+      note: stats.stalePending > 0 ? `${stats.stalePending} waiting more than 3 days` : 'Awaiting Coordinator review',
+      noteClass: stats.stalePending > 0 ? 'text-amber-700 font-semibold' : 'text-slate-500',
+      href: '/dashboard/borrow?status=PENDING',
+      link: `${reviewLabel} →`,
+    },
+    {
+      title: 'Reserved (to collect)',
+      color: 'text-blue-600',
+      value: stats.reservations,
+      note: 'Recommended, awaiting handover',
+      href: '/dashboard/borrow?status=APPROVED',
+      link: 'View reservations →',
+    },
+    {
+      title: 'Active Loans',
+      color: 'text-indigo-600',
+      value: stats.activeLoans,
+      note: stats.returnsInProgress > 0 ? `${stats.returnsInProgress} return(s) in progress` : 'Equipment currently issued',
+      href: '/dashboard/borrow?status=ISSUED',
+      link: 'View issued gear →',
+    },
+    {
+      title: 'Overdue Returns',
+      color: 'text-rose-600',
+      value: stats.overdueLoans,
+      valueClass: 'text-rose-600',
+      note: 'Still on loan past the return date',
+      href: '/dashboard/borrow?status=OVERDUE',
+      link: 'Manage overdue →',
+    },
+  ];
 
   return (
     <div className="p-6 max-w-7xl mx-auto font-sans space-y-8">
@@ -59,7 +81,11 @@ export default function DashboardOverviewPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Dashboard Overview</h1>
           <p className="text-sm text-slate-600">
-            Real-time status of lab hardware, active borrowings, and pending actions
+            {scope === 'ALL'
+              ? 'All laboratories'
+              : scope === 'ASSIGNED'
+              ? 'Your assigned laboratories'
+              : 'You are not assigned to any laboratory yet — ask the Super Admin to assign you.'}
           </p>
         </div>
         <button
@@ -72,64 +98,38 @@ export default function DashboardOverviewPage() {
 
       {/* Metrics Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Metric 1: Pending Approvals */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm relative overflow-hidden">
-          <div className="text-xs font-semibold text-amber-600 uppercase tracking-wider mb-1">
-            Pending Requests
+        {cards.map((c) => (
+          <div key={c.title} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+            <div className={`text-xs font-semibold uppercase tracking-wider mb-1 ${c.color}`}>{c.title}</div>
+            <div className={`text-3xl font-bold ${c.valueClass ?? 'text-slate-900'}`}>{c.value}</div>
+            <p className={`text-xs mt-2 ${c.noteClass ?? 'text-slate-500'}`}>{c.note}</p>
+            <Link href={c.href} className="mt-3 block text-xs text-blue-600 font-semibold hover:underline">
+              {c.link}
+            </Link>
           </div>
-          <div className="text-3xl font-bold text-slate-900">{stats?.pendingRequests || 0}</div>
-          <p className="text-xs text-slate-500 mt-2">Awaiting staff review</p>
-          <Link
-            href="/dashboard/borrow?status=PENDING"
-            className="mt-3 block text-xs text-blue-600 font-semibold hover:underline"
-          >
-            Review requests &rarr;
+        ))}
+      </div>
+
+      {/* Unit availability */}
+      <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+        <div className="flex justify-between items-center mb-3">
+          <h2 className="text-base font-bold text-slate-900">Physical units ({stats.unitsTotal})</h2>
+          <Link href="/dashboard/inventory" className="text-xs font-semibold text-blue-600 hover:underline">
+            Browse inventory →
           </Link>
         </div>
-
-        {/* Metric 2: Active Loans */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-          <div className="text-xs font-semibold text-indigo-600 uppercase tracking-wider mb-1">
-            Active Loans
-          </div>
-          <div className="text-3xl font-bold text-slate-900">{stats?.activeLoans || 0}</div>
-          <p className="text-xs text-slate-500 mt-2">Equipment currently issued</p>
-          <Link
-            href="/dashboard/borrow?status=ISSUED"
-            className="mt-3 block text-xs text-blue-600 font-semibold hover:underline"
-          >
-            View issued gear &rarr;
-          </Link>
-        </div>
-
-        {/* Metric 3: Overdue Items */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-          <div className="text-xs font-semibold text-rose-600 uppercase tracking-wider mb-1">
-            Overdue Returns
-          </div>
-          <div className="text-3xl font-bold text-rose-600">{stats?.overdueLoans || 0}</div>
-          <p className="text-xs text-slate-500 mt-2">Past expected return date</p>
-          <Link
-            href="/dashboard/borrow?status=OVERDUE"
-            className="mt-3 block text-xs text-rose-600 font-semibold hover:underline"
-          >
-            Manage overdue &rarr;
-          </Link>
-        </div>
-
-        {/* Metric 4: Total Inventory */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-            Total Inventory
-          </div>
-          <div className="text-3xl font-bold text-slate-900">{stats?.totalEquipment || 0}</div>
-          <p className="text-xs text-slate-500 mt-2">Across {stats?.totalLabs || 0} laboratories</p>
-          <Link
-            href="/dashboard/inventory"
-            className="mt-3 block text-xs text-blue-600 font-semibold hover:underline"
-          >
-            Browse inventory &rarr;
-          </Link>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
+          {[
+            ['Available', stats.unitsAvailable, 'text-emerald-700 bg-emerald-50'],
+            ['Reserved', stats.unitsReserved, 'text-blue-700 bg-blue-50'],
+            ['Issued', stats.unitsIssued, 'text-indigo-700 bg-indigo-50'],
+            ['Unavailable', stats.unitsUnavailable, 'text-rose-700 bg-rose-50'],
+          ].map(([label, value, cls]) => (
+            <div key={label as string} className={`rounded-lg p-3 ${cls}`}>
+              <div className="text-2xl font-bold">{value}</div>
+              <div className="text-[11px] font-semibold uppercase">{label}</div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -140,63 +140,44 @@ export default function DashboardOverviewPage() {
             <h2 className="text-base font-bold text-slate-900">Recent Request Activity</h2>
             <p className="text-xs text-slate-500">Latest borrowing updates and requests</p>
           </div>
-          <Link
-            href="/dashboard/borrow"
-            className="text-xs font-semibold text-blue-600 hover:underline"
-          >
+          <Link href="/dashboard/borrow" className="text-xs font-semibold text-blue-600 hover:underline">
             View All Logs
           </Link>
         </div>
 
-        {!data?.recentLogs || data.recentLogs.length === 0 ? (
+        {data.recentLogs.length === 0 ? (
           <div className="p-8 text-center text-slate-500 text-sm">No activity recorded yet.</div>
         ) : (
-          <table className="w-full text-left text-sm">
-            <thead className="border-b text-slate-600 uppercase text-[11px] font-semibold tracking-wider bg-slate-50/50">
-              <tr>
-                <th className="py-2.5 px-4">User</th>
-                <th className="py-2.5 px-4">Equipment</th>
-                <th className="py-2.5 px-4">Target Return</th>
-                <th className="py-2.5 px-4">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y text-slate-800">
-              {data.recentLogs.map((log) => (
-                <tr key={log.id} className="hover:bg-slate-50/50">
-                  <td className="py-3 px-4 font-medium text-slate-900">
-                    {log.user.name}
-                    <span className="block text-xs font-mono text-slate-400">{log.user.email}</span>
-                  </td>
-                  <td className="py-3 px-4">
-                    <span className="font-semibold text-slate-800">{log.equipment.name}</span>
-                    <span className="block text-xs text-slate-500">{log.equipment.lab.name}</span>
-                  </td>
-                  <td className="py-3 px-4 text-xs text-slate-600">
-                    {new Date(log.returnDate).toLocaleDateString()}
-                  </td>
-                  <td className="py-3 px-4">
-                    <span
-                      className={`px-2.5 py-0.5 text-[10px] font-bold rounded-full border ${
-                        log.status === 'PENDING'
-                          ? 'bg-amber-50 text-amber-700 border-amber-200'
-                          : log.status === 'APPROVED'
-                          ? 'bg-blue-50 text-blue-700 border-blue-200'
-                          : log.status === 'ISSUED'
-                          ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                          : log.status === 'RETURNED'
-                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                          : log.status === 'OVERDUE'
-                          ? 'bg-rose-50 text-rose-700 border-rose-200'
-                          : 'bg-slate-100 text-slate-600 border-slate-300'
-                      }`}
-                    >
-                      {log.status}
-                    </span>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b text-slate-600 uppercase text-[11px] font-semibold tracking-wider bg-slate-50/50">
+                <tr>
+                  <th className="py-2.5 px-4">User</th>
+                  <th className="py-2.5 px-4">Equipment</th>
+                  <th className="py-2.5 px-4">Target Return</th>
+                  <th className="py-2.5 px-4">Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y text-slate-800">
+                {data.recentLogs.map((log) => (
+                  <tr key={log.id} className="hover:bg-slate-50/50">
+                    <td className="py-3 px-4 font-medium text-slate-900">
+                      {log.user.name}
+                      <span className="block text-xs font-mono text-slate-400">{log.user.email}</span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="font-semibold text-slate-800">{log.equipment.name}</span>
+                      <span className="block text-xs text-slate-500">{log.equipment.lab.name}</span>
+                    </td>
+                    <td className="py-3 px-4 text-xs text-slate-600">{new Date(log.returnDate).toLocaleDateString()}</td>
+                    <td className="py-3 px-4">
+                      <RequestStatusBadge status={log.status} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

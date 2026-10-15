@@ -1,16 +1,20 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { loginUser, verify2FALogin } from '@/actions/auth';
-import { useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 
-export default function LoginPage() {
-  const [error, setError] = useState('');
+function LoginForm() {
+  const searchParams = useSearchParams();
+  const [error, setError] = useState(searchParams.get('error') ?? '');
   const [loading, setLoading] = useState(false);
   const [require2FA, setRequire2FA] = useState(false);
   const [totpToken, setTotpToken] = useState('');
-  const router = useRouter();
+  function goHome() {
+    // Full reload so proxy.ts routes by role: staff -> /dashboard, borrowers -> inventory.
+    window.location.assign('/login');
+  }
 
   async function handleLogin(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -25,12 +29,11 @@ export default function LoginPage() {
 
     setLoading(false);
     if (!res.success) {
-      setError(res.error || 'Login failed.');
+      setError(res.error);
     } else if (res.require2FA) {
       setRequire2FA(true);
     } else {
-      router.push('/');
-      router.refresh();
+      goHome();
     }
   }
 
@@ -43,10 +46,9 @@ export default function LoginPage() {
     setLoading(false);
 
     if (!res.success) {
-      setError(res.error || 'Invalid 2FA code.');
+      setError(res.error);
     } else {
-      router.push('/');
-      router.refresh();
+      goHome();
     }
   }
 
@@ -59,7 +61,7 @@ export default function LoginPage() {
           </h2>
           <p className="text-sm text-slate-600 mt-1">
             {require2FA
-              ? 'Enter the 6-digit code from Google Authenticator'
+              ? 'Enter the 6-digit code from your authenticator app'
               : 'Sign in with your University credentials'}
           </p>
         </div>
@@ -80,7 +82,8 @@ export default function LoginPage() {
                 name="email"
                 type="email"
                 required
-                placeholder="kalhara.b@eie.ruh.ac.lk"
+                autoComplete="username"
+                placeholder="name@eie.ruh.ac.lk"
                 className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
               />
             </div>
@@ -93,6 +96,7 @@ export default function LoginPage() {
                 name="password"
                 type="password"
                 required
+                autoComplete="current-password"
                 placeholder="••••••••"
                 className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
               />
@@ -116,6 +120,8 @@ export default function LoginPage() {
                 value={totpToken}
                 onChange={(e) => setTotpToken(e.target.value)}
                 maxLength={6}
+                inputMode="numeric"
+                autoComplete="one-time-code"
                 required
                 placeholder="123456"
                 className="w-full px-3 py-2 text-center text-xl tracking-widest border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono"
@@ -138,7 +144,18 @@ export default function LoginPage() {
             Register
           </Link>
         </p>
+        <p className="text-center text-xs text-slate-400">
+          Forgot your password? Contact the system administrator for a temporary password.
+        </p>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   );
 }

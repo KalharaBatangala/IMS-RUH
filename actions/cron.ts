@@ -1,44 +1,21 @@
 'use server';
 
-import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
+import { requireSession } from '@/lib/auth';
+import { toActionError } from '@/lib/errors';
+import { runMaintenance } from '@/lib/borrow-workflow';
 
+// Flags overdue loans and expires uncollected reservations. This also runs automatically
+// whenever the Requests page loads, and via /api/cron/overdue (requires CRON_SECRET).
+// An overdue loan stays ISSUED: overdue never releases the unit.
 export async function checkAndUpdateOverdueLogs() {
   try {
-    const now = new Date();
-
-    // Find all ISSUED logs where returnDate is in the past
-    const overdueLogs = await prisma.borrowLog.findMany({
-      where: {
-        status: 'ISSUED',
-        returnDate: {
-          lt: now,
-        },
-      },
-      select: { id: true },
-    });
-
-    if (overdueLogs.length === 0) {
-      return { success: true, updatedCount: 0, message: 'No overdue items found.' };
-    }
-
-    const idsToUpdate = overdueLogs.map((log) => log.id);
-
-    // Update their status to OVERDUE
-    const result = await prisma.borrowLog.updateMany({
-      where: {
-        id: {
-          in: idsToUpdate,
-        },
-      },
-      data: {
-        status: 'OVERDUE',
-      },
-    });
-
+    const session = await requireSession();
+    if (session.role === 'BORROWER') return { success: false as const, error: 'Not permitted.' };
+    const result = await runMaintenance();
     revalidatePath('/dashboard/borrow');
-    return { success: true, updatedCount: result.count };
-  } catch (error: any) {
-    return { success: false, error: error.message || 'Failed to update overdue logs.' };
+    return { success: true as const, updatedCount: result.overdue, expiredCount: result.expired };
+  } catch (error) {
+    return toActionError(error, 'Failed to update overdue logs.');
   }
 }

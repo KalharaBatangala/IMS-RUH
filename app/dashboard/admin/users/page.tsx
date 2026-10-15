@@ -17,17 +17,19 @@ export default function PendingUsersPage() {
   const [loading, setLoading] = useState(true);
   const [approvingId, setApprovingId] = useState<string | null>(null);
 
-  async function fetchPending() {
-    setLoading(true);
-    const res = await getPendingUsers();
-    if (res.success && res.users) {
-      setUsers(res.users);
-    }
+  function applyPending(res: Awaited<ReturnType<typeof getPendingUsers>>) {
+    if (res.success) setUsers(res.users);
+    else Swal.fire('Error', res.error, 'error');
     setLoading(false);
   }
 
+  async function fetchPending() {
+    setLoading(true);
+    applyPending(await getPendingUsers());
+  }
+
   useEffect(() => {
-    fetchPending();
+    getPendingUsers().then(applyPending);
   }, []);
 
   async function handleApprove(userId: string) {
@@ -36,7 +38,7 @@ export default function PendingUsersPage() {
     if (res.success) {
       setUsers((prev) => prev.filter((u) => u.id !== userId));
     } else {
-      Swal.fire('Error', res.error || 'Failed to approve user', 'error');
+      Swal.fire('Error', res.error, 'error');
     }
     setApprovingId(null);
   }
@@ -46,7 +48,9 @@ export default function PendingUsersPage() {
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Pending User Approvals</h1>
-          <p className="text-sm text-slate-600">Approve lab borrowers registered on the local network</p>
+          <p className="text-sm text-slate-600">
+            Approve users registered on the local network. New accounts start as Borrowers; change roles on the Users page.
+          </p>
         </div>
         <button
           onClick={fetchPending}
@@ -84,9 +88,7 @@ export default function PendingUsersPage() {
                       {u.role}
                     </span>
                   </td>
-                  <td className="py-3 px-4 text-xs text-slate-500">
-                    {new Date(u.createdAt).toLocaleDateString()}
-                  </td>
+                  <td className="py-3 px-4 text-xs text-slate-500">{new Date(u.createdAt).toLocaleDateString()}</td>
                   <td className="py-3 px-4 text-right">
                     <button
                       onClick={() => handleApprove(u.id)}

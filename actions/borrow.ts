@@ -1,17 +1,18 @@
 'use server';
 
-import { prisma } from '@/lib/prisma';
-import { getSession } from '@/lib/auth';
-import { RequestStatus } from '@prisma/client';
 import { revalidatePath } from 'next/cache';
+import type { ItemCondition } from '@prisma/client';
+import { requireSession } from '@/lib/auth';
+import { toActionError } from '@/lib/errors';
+import * as workflow from '@/lib/borrow-workflow';
 
-// Helper for Staff / Admin auth check
-async function checkStaffAuth() {
-  const session = await getSession();
-  if (!session || (session.role !== 'LAB_STAFF' && session.role !== 'SUPER_ADMIN')) {
-    throw new Error('Unauthorized');
-  }
-  return session;
+// Thin server-action wrappers: authenticate, delegate to lib/borrow-workflow.ts (which
+// enforces role + lab scope + state atomically), revalidate, and return the standard shape.
+
+function refresh() {
+  revalidatePath('/dashboard/borrow');
+  revalidatePath('/dashboard/inventory');
+  revalidatePath('/dashboard');
 }
 
 // 1. Borrower submits a request
@@ -22,107 +23,133 @@ export async function createBorrowRequest(data: {
   notes?: string;
 }) {
   try {
-    const session = await getSession();
-    if (!session) return { success: false, error: 'Not authenticated.' };
-
-    const availableCount = await prisma.equipmentUnit.count({
-      where: { equipmentId: data.equipmentId, status: 'AVAILABLE', condition: 'WORKING' },
-    });
-    if (availableCount === 0) {
-      return { success: false, error: 'No working units of this equipment are currently available.' };
-    }
-
-    const log = await prisma.borrowLog.create({
-      data: {
-        userId: session.userId,
-        equipmentId: data.equipmentId,
-        borrowDate: new Date(data.borrowDate),
-        returnDate: new Date(data.returnDate),
-        notes: data.notes || null,
-        status: 'PENDING',
-      },
-    });
-
-    revalidatePath('/dashboard/inventory');
-    revalidatePath('/dashboard/borrow');
-    return { success: true, log };
-  } catch (error: any) {
-    return { success: false, error: error.message || 'Failed to submit borrow request.' };
+    const session = await requireSession();
+    const result = await workflow.createRequest(session, data);
+    refresh();
+    return { success: true as const, data: result };
+  } catch (error) {
+    return toActionError(error, 'Failed to submit borrow request.');
   }
 }
 
-// 2. Fetch Borrow Requests (Filtered by Role)
+// 2. Requests visible to the current user, with the actions they may take
 export async function getBorrowLogs() {
   try {
-    const session = await getSession();
-    if (!session) return { success: false, error: 'Not authenticated.' };
-
-    const isStaff = session.role === 'LAB_STAFF' || session.role === 'SUPER_ADMIN';
-
-    const logs = await prisma.borrowLog.findMany({
-      where: isStaff ? {} : { userId: session.userId },
-      include: {
-        user: { select: { name: true, email: true } },
-        equipment: { include: { lab: { select: { name: true } } } },
-        unit: { select: { serialNumber: true } },
-        approvedBy: { select: { name: true } },
-        issuedBy: { select: { name: true } },
-        returnedBy: { select: { name: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    return { success: true, logs };
+    const session = await requireSession();
+    await workflow.runMaintenance();
+    const logs = await workflow.listVisibleLogs(session);
+    return { success: true as const, logs };
   } catch (error) {
-    return { success: false, error: 'Failed to fetch borrow requests.' };
+    return toActionError(error, 'Failed to fetch borrow requests.');
   }
 }
 
-// 3. Staff Action: Update Request Status (APPROVED, ISSUED, RETURNED, REJECTED)
-export async function updateBorrowStatus(logId: string, status: RequestStatus, unitId?: string) {
+export async function cancelBorrowRequest(logId: string, reason?: string) {
   try {
-    const session = await checkStaffAuth();
+    const session = await requireSession();
+    await workflow.cancelRequest(session, logId, reason);
+    refresh();
+    return { success: true as const };
+  } catch (error) {
+    return toActionError(error, 'Failed to cancel request.');
+  }
+}
 
-    const currentLog = await prisma.borrowLog.findUnique({ where: { id: logId } });
-    if (!currentLog) return { success: false, error: 'Borrow request not found.' };
+// 3. Coordinator
+export async function getReservableUnits(logId: string) {
+  try {
+    const session = await requireSession();
+    return { success: true as const, data: await workflow.getReservableUnits(session, logId) };
+  } catch (error) {
+    return toActionError(error, 'Failed to load available units.');
+  }
+}
 
-    if (status === 'ISSUED' && !unitId) {
-      return { success: false, error: 'Please select which serial number is being issued.' };
-    }
+export async function recommendBorrowRequest(logId: string, unitId: string) {
+  try {
+    const session = await requireSession();
+    const data = await workflow.recommendRequest(session, logId, unitId);
+    refresh();
+    return { success: true as const, data };
+  } catch (error) {
+    return toActionError(error, 'Failed to recommend request.');
+  }
+}
 
-    await prisma.$transaction(async (tx) => {
-      if (status === 'ISSUED') {
-        const unit = await tx.equipmentUnit.findUnique({ where: { id: unitId! } });
-        if (!unit || unit.status !== 'AVAILABLE' || unit.condition !== 'WORKING') {
-          throw new Error('Selected unit is no longer available.');
-        }
-        await tx.equipmentUnit.update({ where: { id: unitId! }, data: { status: 'ISSUED' } });
-      }
+export async function rejectBorrowRequest(logId: string, reason: string) {
+  try {
+    const session = await requireSession();
+    await workflow.rejectRequest(session, logId, reason);
+    refresh();
+    return { success: true as const };
+  } catch (error) {
+    return toActionError(error, 'Failed to reject request.');
+  }
+}
 
-      if (status === 'RETURNED' && currentLog.unitId) {
-        await tx.equipmentUnit.update({
-          where: { id: currentLog.unitId },
-          data: { status: 'AVAILABLE' },
-        });
-      }
+export async function regenerateHandoverCode(logId: string) {
+  try {
+    const session = await requireSession();
+    return { success: true as const, data: await workflow.regenerateHandoverCode(session, logId) };
+  } catch (error) {
+    return toActionError(error, 'Failed to generate a handover code.');
+  }
+}
 
-      const updateData: any = { status };
-      if (status === 'APPROVED') updateData.approvedById = session.userId;
-      if (status === 'ISSUED') {
-        updateData.issuedById = session.userId;
-        updateData.unitId = unitId;
-      }
-      if (status === 'RETURNED') {
-        updateData.returnedById = session.userId;
-        updateData.actualReturn = new Date();
-      }
+export async function overrideReturnAcknowledgement(logId: string, reason: string) {
+  try {
+    const session = await requireSession();
+    await workflow.overrideReturnAcknowledgement(session, logId, reason);
+    refresh();
+    return { success: true as const };
+  } catch (error) {
+    return toActionError(error, 'Failed to record acknowledgement.');
+  }
+}
 
-      await tx.borrowLog.update({ where: { id: logId }, data: updateData });
-    });
+// 4. Technical Officer
+export async function issueBorrowRequest(logId: string, code: string, notes?: string) {
+  try {
+    const session = await requireSession();
+    await workflow.issueWithCode(session, logId, code, notes);
+    refresh();
+    return { success: true as const };
+  } catch (error) {
+    refresh(); // a failed attempt may have locked the code
+    return toActionError(error, 'Failed to issue item.');
+  }
+}
 
-    revalidatePath('/dashboard/borrow');
-    return { success: true };
-  } catch (error: any) {
-    return { success: false, error: error.message || 'Failed to update request status.' };
+export async function startReturn(logId: string, condition: ItemCondition, notes?: string) {
+  try {
+    const session = await requireSession();
+    const data = await workflow.startReturn(session, logId, { condition, notes });
+    refresh();
+    return { success: true as const, data };
+  } catch (error) {
+    return toActionError(error, 'Failed to start the return.');
+  }
+}
+
+export async function finalizeReturn(logId: string) {
+  try {
+    const session = await requireSession();
+    await workflow.finalizeReturn(session, logId);
+    refresh();
+    return { success: true as const };
+  } catch (error) {
+    return toActionError(error, 'Failed to complete the return.');
+  }
+}
+
+// 5. Borrower acknowledges a return with the code shown by the TO
+export async function acknowledgeReturn(logId: string, code: string) {
+  try {
+    const session = await requireSession();
+    await workflow.acknowledgeReturn(session, logId, code);
+    refresh();
+    return { success: true as const };
+  } catch (error) {
+    return toActionError(error, 'Failed to acknowledge the return.');
   }
 }

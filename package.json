@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "admin:create": "tsx --env-file=.env scripts/create-admin.ts",
+    "test:workflow": "tsx --env-file=.env scripts/test-workflow.ts"
   },
   "dependencies": {
     "@react-email/components": "^1.0.12",

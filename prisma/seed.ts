@@ -1,6 +1,16 @@
-import { PrismaClient, Role, ItemCondition } from '@prisma/client';
+import { PrismaClient, Role, ItemCondition, type AssignmentRole } from '@prisma/client';
+
+// Development seed. Users are created WITHOUT passwords: a Super Admin sets a temporary
+// password from the Users page (or run `npm run admin:create` for the first admin).
+// upsert + nested create only runs when a row is first created; re-seeding an existing
+// database does not add nested equipment/units again.
 
 const prisma = new PrismaClient();
+
+async function ensureAssignment(labId: string, userId: string, role: AssignmentRole) {
+  const existing = await prisma.labAssignment.findFirst({ where: { labId, userId, unassignedAt: null } });
+  if (!existing) await prisma.labAssignment.create({ data: { labId, userId, role } });
+}
 
 async function main() {
   console.log('🌱 Starting database seeding...');
@@ -8,31 +18,32 @@ async function main() {
   const adminUser = await prisma.user.upsert({
     where: { email: 'kalhara.b@eie.ruh.ac.lk' },
     update: {},
-    create: { email: 'kalhara.b@eie.ruh.ac.lk', name: 'Kalhara Batangala', role: Role.SUPER_ADMIN },
+    create: { email: 'kalhara.b@eie.ruh.ac.lk', name: 'Kalhara Batangala', role: Role.SUPER_ADMIN, isApproved: true },
   });
-  console.log(`✅ Created Super Admin: ${adminUser.email}`);
+  console.log(`✅ Super Admin: ${adminUser.email}`);
 
   const drSubodha = await prisma.user.upsert({
     where: { email: 'subodha.g@eie.ruh.ac.lk' },
     update: {},
-    create: { email: 'subodha.g@eie.ruh.ac.lk', name: 'Dr. Subodha Gunawardana', role: Role.LAB_STAFF, isApproved: true },
+    create: { email: 'subodha.g@eie.ruh.ac.lk', name: 'Dr. Subodha Gunawardana', role: Role.COORDINATOR, isApproved: true },
   });
-  console.log(`✅ Created Coordinator: ${drSubodha.name}`);
-
   const drUdayanga = await prisma.user.upsert({
     where: { email: 'udayanga.n@eie.ruh.ac.lk' },
     update: {},
-    create: { email: 'udayanga.n@eie.ruh.ac.lk', name: 'Dr. Niranjan Udayanga', role: Role.LAB_STAFF, isApproved: true },
+    create: { email: 'udayanga.n@eie.ruh.ac.lk', name: 'Dr. Niranjan Udayanga', role: Role.COORDINATOR, isApproved: true },
   });
-  console.log(`✅ Created Coordinator: ${drUdayanga.name}`);
+  const technicalOfficer = await prisma.user.upsert({
+    where: { email: 'to.robotics@eie.ruh.ac.lk' },
+    update: {},
+    create: { email: 'to.robotics@eie.ruh.ac.lk', name: 'Sample Technical Officer', role: Role.TECHNICAL_OFFICER, isApproved: true },
+  });
+  console.log('✅ Coordinators and Technical Officer');
 
   const roboticsLab = await prisma.lab.upsert({
     where: { name: 'Robotics Laboratory' },
     update: {},
     create: {
       name: 'Robotics Laboratory',
-      coordinators: [drSubodha.id],
-      instructors: ['Mr. Kamalanath'],
       equipment: {
         create: [
           {
@@ -57,15 +68,12 @@ async function main() {
       },
     },
   });
-  console.log(`✅ Seeded Lab: ${roboticsLab.name}`);
 
   const arVrLab = await prisma.lab.upsert({
     where: { name: 'AR/VR Laboratory' },
     update: {},
     create: {
       name: 'AR/VR Laboratory',
-      coordinators: [drUdayanga.id],
-      instructors: ['Ms. Dilini'],
       equipment: {
         create: [
           {
@@ -92,7 +100,16 @@ async function main() {
       },
     },
   });
-  console.log(`✅ Seeded Lab: ${arVrLab.name}`);
+
+  // Assignments only for users whose role matches (an existing DB may hold other roles).
+  const roleOf = async (id: string) => (await prisma.user.findUniqueOrThrow({ where: { id } })).role;
+  if ((await roleOf(drSubodha.id)) === 'COORDINATOR') await ensureAssignment(roboticsLab.id, drSubodha.id, 'COORDINATOR');
+  if ((await roleOf(drUdayanga.id)) === 'COORDINATOR') await ensureAssignment(arVrLab.id, drUdayanga.id, 'COORDINATOR');
+  if ((await roleOf(technicalOfficer.id)) === 'TECHNICAL_OFFICER') {
+    await ensureAssignment(roboticsLab.id, technicalOfficer.id, 'TECHNICAL_OFFICER');
+    await ensureAssignment(arVrLab.id, technicalOfficer.id, 'TECHNICAL_OFFICER');
+  }
+  console.log(`✅ Seeded Labs: ${roboticsLab.name}, ${arVrLab.name}`);
 
   console.log('🎉 Seeding completed successfully!');
 }
