@@ -503,6 +503,17 @@ function BorrowPageInner() {
                           Cancel
                         </button>
                       )}
+                      {log.flags.hasForm && (
+                        <a
+                          href={`/dashboard/borrow/${log.id}/form`}
+                          target="_blank"
+                          rel="noopener"
+                          title="Open the printable loan form (Print / Save as PDF)"
+                          className="px-2.5 py-1 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 text-xs font-medium rounded transition whitespace-nowrap"
+                        >
+                          📄 Loan Form
+                        </a>
+                      )}
                       {log.flags.isOwn && log.status === 'APPROVED' && (
                         <span className="text-[11px] text-slate-500 text-left basis-full">
                           Collect your handover code from the Coordinator, then present it to the Technical Officer.

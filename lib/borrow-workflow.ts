@@ -11,6 +11,7 @@ import {
   assignmentRoleFor,
   getActiveLabIds,
   getLabStaffing,
+  isAssignedToLab,
   requireLabOperational,
   requireLabRole,
 } from '@/lib/authz';
@@ -685,6 +686,9 @@ export async function listVisibleLogs(actor: Actor) {
         selfRecommended: Boolean(log.approvedById && log.approvedById === log.userId),
         returnStarted,
         returnAcked,
+        // Printable loan form exists once a Coordinator has recommended the request.
+        // Kept out of `can` so it does not count as "needs my action".
+        hasForm: Boolean(log.approvedAt),
       },
       can: {
         cancel: isOwn && OPEN_REQUEST.includes(log.status),
@@ -701,3 +705,39 @@ export async function listVisibleLogs(actor: Actor) {
   });
 }
 
+
+// ---------------------------------------------------------------------------
+// 8. Printable loan form (read-only). Available once a request has been recommended,
+//    and kept available afterwards (issued, returned, or voided) as a record.
+//    Same visibility as the request list: the borrower, the lab's currently assigned
+//    Coordinator / TO, or a Super Admin. Returns null for "not found" AND "not allowed"
+//    so the existence of other people's requests is not revealed.
+//    Confirmation codes are never loaded here.
+// ---------------------------------------------------------------------------
+
+export async function getLoanForm(actor: Actor, logId: string) {
+  if (typeof logId !== 'string' || !/^[0-9a-f-]{36}$/i.test(logId)) return null;
+  const name = { select: { name: true } } as const;
+  const log = await prisma.borrowLog.findUnique({
+    where: { id: logId },
+    include: {
+      user: { select: { name: true, email: true } },
+      equipment: { select: { name: true, brand: true, model: true, labId: true, lab: { select: { name: true } } } },
+      unit: { select: { serialNumber: true, serialIsPlaceholder: true, location: true } },
+      approvedBy: { select: { name: true, email: true } },
+      cancelledBy: name,
+      issuedBy: name,
+      returnInitiatedBy: name,
+      returnAckOverrideBy: name,
+      returnedBy: name,
+    },
+  });
+  if (!log || !log.approvedAt) return null;
+
+  const staffRole = assignmentRoleFor(actor);
+  const allowed =
+    actor.role === 'SUPER_ADMIN' ||
+    log.userId === actor.userId ||
+    (staffRole !== null && (await isAssignedToLab(actor.userId, log.equipment.labId, staffRole)));
+  return allowed ? log : null;
+}

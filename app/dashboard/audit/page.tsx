@@ -6,6 +6,98 @@ import { getAuditLog } from '@/actions/audit';
 
 type AuditResult = Extract<Awaited<ReturnType<typeof getAuditLog>>, { success: true }>;
 
+// ---- Readable rendering of the stored `details` JSON (display only; the record is unchanged) ----
+
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+type JsonObject = { [key: string]: Json };
+
+const isObject = (v: unknown): v is JsonObject => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+// "unavailableReason" -> "Unavailable reason"
+function labelFor(key: string) {
+  const words = key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/_/g, ' ').toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+function formatValue(value: Json | undefined): string {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value)) return new Date(value).toLocaleString();
+  if (Array.isArray(value)) return value.map((v) => formatValue(v)).join(', ');
+  if (isObject(value)) return Object.entries(value).map(([k, v]) => `${labelFor(k)}: ${formatValue(v)}`).join('; ');
+  return String(value);
+}
+
+// Unit edits store `before.archived` (boolean) but `changed.archivedAt` (date or null).
+function normalizeChange(key: string, value: Json | undefined): [string, Json | undefined] {
+  if (key === 'archivedAt') return ['archived', value === undefined ? undefined : Boolean(value)];
+  return [key, value];
+}
+
+function AuditDetails({ details }: { details: unknown }) {
+  if (!isObject(details)) return <span>{formatValue(details as Json)}</span>;
+
+  const before = isObject(details.before) ? details.before : null;
+  const after = isObject(details.changed) ? details.changed : isObject(details.after) ? details.after : null;
+  const rest = Object.entries(details).filter(([k]) => !(before && k === 'before') && !(after && (k === 'changed' || k === 'after')));
+
+  // Only fields whose value actually differs (forms submit unchanged fields too).
+  const changes: { key: string; from: Json | undefined; to: Json | undefined }[] = [];
+  if (after) {
+    for (const [rawKey, rawValue] of Object.entries(after)) {
+      const [key, to] = normalizeChange(rawKey, rawValue);
+      const from = before?.[key];
+      if (before && formatValue(from) === formatValue(to)) continue;
+      changes.push({ key, from, to });
+    }
+  }
+
+  return (
+    <div className="space-y-1">
+      {rest.length > 0 && (
+        <dl className="space-y-0.5">
+          {rest.map(([k, v]) => (
+            <div key={k}>
+              <dt className="inline font-semibold text-slate-500">{labelFor(k)}: </dt>
+              <dd className="inline text-slate-800 break-words">{formatValue(v)}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {after && (
+        <ul className="space-y-0.5">
+          {changes.length === 0 ? (
+            <li className="italic text-slate-400">No field values changed</li>
+          ) : (
+            changes.map((c) => (
+              <li key={c.key}>
+                <span className="font-semibold text-slate-500">{labelFor(c.key)}: </span>
+                {before && (
+                  <>
+                    <span className="text-rose-700 line-through decoration-rose-300">{formatValue(c.from)}</span>
+                    <span className="text-slate-400"> → </span>
+                  </>
+                )}
+                <span className="text-emerald-700 font-medium">{formatValue(c.to)}</span>
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+      {before && !after && (
+        <div>
+          <span className="font-semibold text-slate-500">Before: </span>
+          <span className="text-slate-800">{formatValue(before)}</span>
+        </div>
+      )}
+      <details className="text-[10px] text-slate-400">
+        <summary className="cursor-pointer select-none hover:text-slate-600">raw</summary>
+        <pre className="mt-1 whitespace-pre-wrap break-all font-mono text-slate-500">{JSON.stringify(details, null, 2)}</pre>
+      </details>
+    </div>
+  );
+}
+
 export default function AuditPage() {
   const [result, setResult] = useState<AuditResult | null>(null);
   const [action, setAction] = useState('');
@@ -83,8 +175,8 @@ export default function AuditPage() {
                       {row.entityType}
                       <span className="block font-mono text-slate-400">{row.entityId?.slice(0, 8)}</span>
                     </td>
-                    <td className="py-2 px-4 text-[11px] font-mono text-slate-600 max-w-md break-all">
-                      {row.details ? JSON.stringify(row.details) : ''}
+                    <td className="py-2 px-4 text-[11px] text-slate-600 max-w-md">
+                      {row.details ? <AuditDetails details={row.details} /> : ''}
                     </td>
                   </tr>
                 ))}
