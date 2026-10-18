@@ -5,6 +5,7 @@ import { POLICY } from '@/lib/config';
 import { ActionError, optionalText, requireText } from '@/lib/errors';
 import { audit } from '@/lib/audit';
 import { notify } from '@/lib/notify';
+import { handoverCodeEmail, sendEmail } from '@/lib/email';
 import { codeMatches, generateCode, hashCode } from '@/lib/codes';
 import { requestableUnitWhere } from '@/lib/availability';
 import {
@@ -59,7 +60,7 @@ async function loadLog(logId: string, db: Tx | typeof prisma = prisma) {
     include: {
       equipment: { select: { id: true, name: true, labId: true, lab: { select: { name: true } } } },
       unit: { select: { id: true, serialNumber: true } },
-      user: { select: { id: true, name: true } },
+      user: { select: { id: true, name: true, email: true } },
     },
   });
   if (!log) throw new ActionError('Request not found.');
@@ -354,18 +355,27 @@ export async function recommendRequest(actor: Actor, logId: string, unitId: stri
     return { code, serialNumber: unit.serialNumber };
   });
 
+  // Email the code to the borrower (after commit; never affects the reservation). The
+  // email doubles as the notification email, so the in-app copy is not emailed again.
+  const codeEmailed = await emailHandoverCode(log, result.code, result.serialNumber, reservationExpiresAt);
   const staffing = await getLabStaffing(log.equipment.labId);
-  await notify([log.userId], {
-    title: 'Request recommended — unit reserved',
-    body: `Your request for "${log.equipment.name}" was recommended by ${actor.name}. Unit ${result.serialNumber} is reserved for you until ${reservationExpiresAt.toLocaleString()}. Collect your handover code from the Coordinator and present it to a Technical Officer of ${log.equipment.lab.name}.`,
-    link: BORROW_PATH,
-  });
+  await notify(
+    [log.userId],
+    {
+      title: 'Request recommended — unit reserved',
+      body: codeEmailed
+        ? `Your request for "${log.equipment.name}" was recommended by ${actor.name}. Unit ${result.serialNumber} is reserved for you until ${reservationExpiresAt.toLocaleString()}. Your handover code has been emailed to you; present it to a Technical Officer of ${log.equipment.lab.name}.`
+        : `Your request for "${log.equipment.name}" was recommended by ${actor.name}. Unit ${result.serialNumber} is reserved for you until ${reservationExpiresAt.toLocaleString()}. Collect your handover code from the Coordinator and present it to a Technical Officer of ${log.equipment.lab.name}.`,
+      link: BORROW_PATH,
+    },
+    { email: !codeEmailed }
+  );
   await notify(staffing.technicalOfficerIds, {
     title: 'Unit reserved — awaiting collection',
     body: `${result.serialNumber} ("${log.equipment.name}") is reserved for ${log.user.name}.`,
     link: BORROW_PATH,
   });
-  return { ...result, reservationExpiresAt };
+  return { ...result, reservationExpiresAt, codeEmailed };
 }
 
 export async function rejectRequest(actor: Actor, logId: string, reason: string) {
@@ -392,7 +402,7 @@ export async function rejectRequest(actor: Actor, logId: string, reason: string)
 // Controlled recovery when the borrower did not receive / lost the handover code.
 export async function regenerateHandoverCode(actor: Actor, logId: string) {
   const log = await loadLog(logId);
-  return tx(async (t) => {
+  const result = await tx(async (t) => {
     await requireLabRole(actor, log.equipment.labId, 'COORDINATOR', t);
     const current = await t.borrowLog.findUnique({ where: { id: log.id }, select: { status: true, reservationExpiresAt: true } });
     if (current?.status !== 'APPROVED' || !current.reservationExpiresAt || current.reservationExpiresAt <= new Date()) {
@@ -400,8 +410,32 @@ export async function regenerateHandoverCode(actor: Actor, logId: string) {
     }
     const code = await createCode(t, log.id, 'HANDOVER', current.reservationExpiresAt, actor.userId);
     await audit(t, { actorId: actor.userId, action: 'HANDOVER_CODE_REGENERATED', entityType: 'BorrowLog', entityId: log.id, labId: log.equipment.labId });
-    return { code, expiresAt: current.reservationExpiresAt };
+    const unit = log.unitId ? await t.equipmentUnit.findUnique({ where: { id: log.unitId }, select: { serialNumber: true } }) : null;
+    return { code, expiresAt: current.reservationExpiresAt, serialNumber: unit?.serialNumber ?? '' };
   });
+  const codeEmailed = await emailHandoverCode(log, result.code, result.serialNumber, result.expiresAt, true);
+  return { code: result.code, expiresAt: result.expiresAt, codeEmailed };
+}
+
+// Sends the handover code to the borrower's university email. Returns false when email is
+// disabled or delivery failed; the Coordinator then gives the code in person as before.
+async function emailHandoverCode(
+  log: Awaited<ReturnType<typeof loadLog>>,
+  code: string,
+  serialNumber: string,
+  expiresAt: Date,
+  regenerated = false
+) {
+  const content = handoverCodeEmail({
+    borrowerName: log.user.name,
+    equipmentName: log.equipment.name,
+    serialNumber,
+    labName: log.equipment.lab.name,
+    code,
+    expiresAt,
+    regenerated,
+  });
+  return sendEmail({ to: log.user.email, userId: log.user.id, kind: 'HANDOVER_CODE', logId: log.id, ...content });
 }
 
 // ---------------------------------------------------------------------------

@@ -1,14 +1,41 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f6f7f9;
+  --foreground: #0f172a;
+}
+
+/*
+ * Design tokens. "brand" is the department navy (the same #1e3a5f used on the printed
+ * loan form) and is the only accent colour in the interface. Emerald / amber / rose are
+ * kept for status meaning only (available, pending, overdue, ...). "gold" is a small
+ * detail colour for the logo and letterhead, never for buttons or large areas.
+ */
+@theme {
+  --color-brand-50: #f3f6fa;
+  --color-brand-100: #e4eaf2;
+  --color-brand-200: #c8d4e3;
+  --color-brand-300: #9fb2cb;
+  --color-brand-400: #6f88ab;
+  --color-brand-500: #4a6a91;
+  --color-brand-600: #34537a;
+  --color-brand-700: #284567;
+  --color-brand-800: #1e3a5f;
+  --color-brand-900: #162b47;
+  --color-brand-950: #0e1c2f;
+
+  --color-gold-400: #c9a65a;
+  --color-gold-500: #b08d3c;
+
+  --shadow-card: 0 1px 2px 0 rgb(15 23 42 / 0.04), 0 1px 3px 0 rgb(15 23 42 / 0.03);
+  --shadow-elevated: 0 4px 6px -2px rgb(15 23 42 / 0.05), 0 12px 24px -6px rgb(15 23 42 / 0.08);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+  /* Operating-system fonts only (no web-font download): Segoe UI Variable on Windows 11. */
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", ui-sans-serif, system-ui, -apple-system, Roboto, Arial, sans-serif;
   --font-mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
 }
 
@@ -16,4 +43,22 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+  font-feature-settings: "tnum" 0;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--color-brand-100);
+  color: var(--color-brand-900);
+}
+
+/* Consistent, quiet keyboard focus ring across buttons, links and inputs. */
+:where(a, button, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 2px;
+}
+
+/* Numbers in tables and stats line up when they use tabular figures. */
+.tabular {
+  font-variant-numeric: tabular-nums;
 }

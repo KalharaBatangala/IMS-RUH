@@ -57,7 +57,7 @@ function LoginForm() {
       <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md space-y-6">
         <div>
           <h2 className="text-2xl font-bold text-slate-900">
-            {require2FA ? 'Two-Factor Authentication' : 'Ruhuna IMS Login'}
+            {require2FA ? 'Two-Factor Authentication' : 'Sign in to DEIE Labs'}
           </h2>
           <p className="text-sm text-slate-600 mt-1">
             {require2FA

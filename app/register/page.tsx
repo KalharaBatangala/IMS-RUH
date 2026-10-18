@@ -34,7 +34,7 @@ export default function RegisterPage() {
     <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4 font-sans">
       <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md space-y-6">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900">Ruhuna IMS Sign Up</h2>
+          <h2 className="text-2xl font-bold text-slate-900">Create your DEIE Labs account</h2>
           <p className="text-sm text-slate-600 mt-1">
             Restricted to <code className="bg-slate-100 px-1 py-0.5 rounded">@eie.ruh.ac.lk</code> and <code className="bg-slate-100 px-1 py-0.5 rounded">@eng.ruh.ac.lk</code> emails.
           </p>

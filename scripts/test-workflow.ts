@@ -9,6 +9,9 @@
 // never touch the real database by accident. It creates its own users/labs/units.
 
 import assert from 'node:assert/strict';
+
+// Never send real emails from the test run (lib/email.ts reads this at send time).
+process.env.EMAIL_ENABLED = 'false';
 import { randomUUID } from 'crypto';
 
 if (!process.env.TEST_DATABASE_URL || process.env.TEST_DATABASE_URL !== process.env.DATABASE_URL) {

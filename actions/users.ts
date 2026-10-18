@@ -62,7 +62,7 @@ export async function toggleUserApproval(userId: string, isApproved: boolean) {
       await tx.user.update({ where: { id: user.id }, data: { isApproved: Boolean(isApproved), sessionVersion: { increment: 1 } } });
       await audit(tx, { actorId: session.userId, action: isApproved ? 'USER_APPROVED' : 'USER_APPROVAL_REVOKED', entityType: 'User', entityId: user.id });
     });
-    if (isApproved) await notify([user.id], { title: 'Account approved', body: 'Your Ruhuna IMS account has been approved.' });
+    if (isApproved) await notify([user.id], { title: 'Account approved', body: 'Your DEIE Labs account has been approved.' });
     refresh();
     return { success: true as const };
   } catch (error) {

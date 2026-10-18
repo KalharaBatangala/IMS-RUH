@@ -290,7 +290,7 @@ export default async function LoanFormPage({ params }: Props) {
               <p className="font-serif text-[19px] font-bold leading-none" style={{ color: NAVY }}>
                 Equipment Loan Form
               </p>
-              <p className="mt-1 text-[9px] uppercase tracking-[0.2em] text-slate-500">Ruhuna IMS · Official Record</p>
+              <p className="mt-1 text-[9px] uppercase tracking-[0.2em] text-slate-500">DEIE Labs · Official Record</p>
               <p className="mt-1.5 font-mono text-[11px] font-semibold text-slate-800">Ref. {ref}</p>
               <span className={`mt-1.5 inline-block rounded-full border px-2.5 py-0.5 text-[8.5px] font-bold uppercase tracking-wider ${status.className}`}>
                 {status.label}
@@ -490,7 +490,7 @@ export default async function LoanFormPage({ params }: Props) {
             )}
             <div className="flex-1 space-y-0.5 text-[8px] leading-snug text-slate-500">
               <p>
-                <span className="font-semibold text-slate-700">The digital record in Ruhuna IMS is authoritative.</span> Scan the code on the
+                <span className="font-semibold text-slate-700">The digital record in DEIE Labs is authoritative.</span> Scan the code on the
                 university network (sign-in required) to confirm the current status. Manual entries on this form should be recorded in the
                 system once it is available.
               </p>

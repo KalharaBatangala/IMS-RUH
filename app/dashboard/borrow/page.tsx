@@ -175,7 +175,11 @@ function BorrowPageInner() {
         await showCode(
           'Handover code',
           res.data.code,
-          `Unit <b>${res.data.serialNumber}</b> is reserved for ${log.user.name} until ${fmtDateTime(res.data.reservationExpiresAt)}.<br/>Give this code to the borrower <b>in person</b>. It will not be shown again; use "New handover code" if it is lost.`
+          `Unit <b>${res.data.serialNumber}</b> is reserved for ${log.user.name} until ${fmtDateTime(res.data.reservationExpiresAt)}.<br/>${
+            res.data.codeEmailed
+              ? 'The code has also been <b>emailed</b> to the borrower. Keep this copy only as a fallback.'
+              : 'The code was <b>not</b> emailed. Give it to the borrower <b>in person</b>.'
+          } It will not be shown again; use "New handover code" if it is lost.`
         );
       } else if (!res.success) {
         Swal.fire('Error', res.error, 'error');
@@ -211,7 +215,11 @@ function BorrowPageInner() {
     startTransition(async () => {
       const res = await regenerateHandoverCode(log.id);
       if (res.success && res.data) {
-        await showCode('New handover code', res.data.code, `Give this code to ${log.user.name} in person. Valid until ${fmtDateTime(res.data.expiresAt)}.`);
+        await showCode('New handover code', res.data.code, `${
+            res.data.codeEmailed
+              ? `The new code has also been <b>emailed</b> to ${log.user.name}.`
+              : `The code was <b>not</b> emailed. Give it to ${log.user.name} in person.`
+          } Valid until ${fmtDateTime(res.data.expiresAt)}.`);
       } else if (!res.success) {
         Swal.fire('Error', res.error, 'error');
       }

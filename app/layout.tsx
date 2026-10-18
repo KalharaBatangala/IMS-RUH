@@ -6,7 +6,7 @@ import Navbar from '@/components/Navbar';
 // so it uses the operating system's font stack (see globals.css).
 
 export const metadata: Metadata = {
-  title: "Ruhuna IMS - DEIE, University of Ruhuna",
+  title: "DEIE Labs — University of Ruhuna",
   description: "Inventory and equipment borrowing system of the Department of Electrical and Information Engineering",
 };
 
@@ -17,7 +17,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="h-full antialiased">
-      <body className="bg-slate-50 min-h-screen flex flex-col antialiased">
+      <body className="bg-background text-foreground min-h-screen flex flex-col antialiased">
         <Navbar />
         <main className="flex-1">{children}</main>
       </body>

@@ -149,7 +149,7 @@ export async function approveUser(userId: string) {
     });
     if (res.count !== 1) throw new ActionError('User not found or already approved.');
     await audit(prisma, { actorId: session.userId, action: 'USER_APPROVED', entityType: 'User', entityId: userId });
-    await notify([userId], { title: 'Account approved', body: 'Your Ruhuna IMS account has been approved.', link: '/dashboard/inventory' });
+    await notify([userId], { title: 'Account approved', body: 'Your DEIE Labs account has been approved.', link: '/dashboard/inventory' });
     revalidatePath('/dashboard/admin/users');
     revalidatePath('/dashboard/users');
     return { success: true as const, message: 'User approved successfully!' };
@@ -167,7 +167,7 @@ export async function setup2FA() {
     if (session.twoFactorEnabled) throw new ActionError('Two-factor authentication is already enabled.');
 
     const secret = generateSecret();
-    const otpauth = generateURI({ issuer: 'Ruhuna IMS', label: session.email, secret });
+    const otpauth = generateURI({ issuer: 'DEIE Labs', label: session.email, secret });
     const qrCodeUrl = await QRCode.toDataURL(otpauth); // generated locally, no network call
 
     await prisma.user.update({ where: { id: session.userId }, data: { twoFactorSecret: secret } });

@@ -11,7 +11,7 @@ generator client {
 // Which LAB they may act in is decided separately by an active LabAssignment.
 enum Role {
   SUPER_ADMIN
-  COORDINATOR       // academic staff: reviews / recommends requests (was LAB_STAFF)
+  COORDINATOR // academic staff: reviews / recommends requests (was LAB_STAFF)
   BORROWER
   TECHNICAL_OFFICER // non-academic staff: physical issue and return
 }
@@ -28,36 +28,36 @@ enum ItemCondition {
 }
 
 enum RequestStatus {
-  PENDING   // submitted, awaiting Coordinator decision
-  APPROVED  // "recommended" by the Coordinator; a specific unit is Reserved
+  PENDING // submitted, awaiting Coordinator decision
+  APPROVED // "recommended" by the Coordinator; a specific unit is Reserved
   REJECTED
-  ISSUED    // physical handover recorded by a TO
+  ISSUED // physical handover recorded by a TO
   RETURNED
-  OVERDUE   // still an active loan (unit stays Issued) past its return date
+  OVERDUE // still an active loan (unit stays Issued) past its return date
   CANCELLED // cancelled before physical issue
-  EXPIRED   // recommended reservation not collected before its deadline
+  EXPIRED // recommended reservation not collected before its deadline
 }
 
 model User {
-  id                 String      @id @default(uuid())
-  email              String      @unique
-  name               String
-  passwordHash       String?
-  role               Role        @default(BORROWER)
-  isApproved         Boolean     @default(false)
+  id               String    @id @default(uuid())
+  email            String    @unique
+  name             String
+  passwordHash     String?
+  role             Role      @default(BORROWER)
+  isApproved       Boolean   @default(false)
   // Deactivation is separate from approval and from lab assignment.
-  isActive           Boolean     @default(true)
+  isActive         Boolean   @default(true)
   // Incremented whenever role / status changes so existing sessions are invalidated.
-  sessionVersion     Int         @default(0)
-  failedLoginCount   Int         @default(0)
-  lockedUntil        DateTime?
+  sessionVersion   Int       @default(0)
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
 
   // 2FA / TOTP Fields
-  twoFactorEnabled   Boolean     @default(false)
-  twoFactorSecret    String?
+  twoFactorEnabled Boolean @default(false)
+  twoFactorSecret  String?
 
-  createdAt          DateTime    @default(now())
-  updatedAt          DateTime    @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   borrowLogs         BorrowLog[] @relation("Borrower")
   approvedLogs       BorrowLog[] @relation("ApprovedBy")
@@ -68,12 +68,13 @@ model User {
   returnStartedLogs  BorrowLog[] @relation("ReturnInitiatedBy")
   returnOverrideLogs BorrowLog[] @relation("ReturnAckOverrideBy")
 
-  labAssignments     LabAssignment[] @relation("AssignedUser")
-  assignmentsMade    LabAssignment[] @relation("AssignedBy")
-  assignmentsEnded   LabAssignment[] @relation("UnassignedBy")
-  codesCreated       ConfirmationCode[]
-  auditEvents        AuditLog[]
-  notifications      Notification[]
+  labAssignments   LabAssignment[]    @relation("AssignedUser")
+  assignmentsMade  LabAssignment[]    @relation("AssignedBy")
+  assignmentsEnded LabAssignment[]    @relation("UnassignedBy")
+  codesCreated     ConfirmationCode[]
+  auditEvents      AuditLog[]
+  notifications    Notification[]
+  emailDeliveries  EmailDelivery[]
 }
 
 // Legacy / unused (kept until removal is approved).
@@ -88,19 +89,19 @@ model VerificationToken {
 }
 
 model Lab {
-  id           String      @id @default(uuid())
-  name         String      @unique
+  id           String    @id @default(uuid())
+  name         String    @unique
   description  String?
   // LEGACY: User IDs of coordinators. Migrated into LabAssignment; no longer read by the app.
   coordinators String[]
   // LEGACY: plain-text names. No longer read by the app.
   instructors  String[]
   archivedAt   DateTime?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  equipment    Equipment[]
-  assignments  LabAssignment[]
+  equipment   Equipment[]
+  assignments LabAssignment[]
 }
 
 enum AssignmentRole {
@@ -111,19 +112,19 @@ enum AssignmentRole {
 // One row per assignment period. Active while unassignedAt is null.
 // Rows are never deleted so historical responsibility stays visible.
 model LabAssignment {
-  id             String         @id @default(uuid())
-  labId          String
-  lab            Lab            @relation(fields: [labId], references: [id], onDelete: Cascade)
-  userId         String
-  user           User           @relation("AssignedUser", fields: [userId], references: [id])
-  role           AssignmentRole
+  id     String         @id @default(uuid())
+  labId  String
+  lab    Lab            @relation(fields: [labId], references: [id], onDelete: Cascade)
+  userId String
+  user   User           @relation("AssignedUser", fields: [userId], references: [id])
+  role   AssignmentRole
 
-  assignedAt     DateTime       @default(now())
+  assignedAt     DateTime  @default(now())
   assignedById   String?
-  assignedBy     User?          @relation("AssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+  assignedBy     User?     @relation("AssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
   unassignedAt   DateTime?
   unassignedById String?
-  unassignedBy   User?          @relation("UnassignedBy", fields: [unassignedById], references: [id], onDelete: SetNull)
+  unassignedBy   User?     @relation("UnassignedBy", fields: [unassignedById], references: [id], onDelete: SetNull)
 
   @@index([labId, unassignedAt])
   @@index([userId, unassignedAt])
@@ -138,48 +139,48 @@ enum UnitStatus {
 }
 
 model Equipment {
-  id           String        @id @default(uuid())
-  name         String
+  id                String        @id @default(uuid())
+  name              String
   // LEGACY columns (quantity, availableQuantity, status, serialNumber, condition):
   // counts and state now come from EquipmentUnit rows. Not read by the app.
-  quantity     Int           @default(1)
+  quantity          Int           @default(1)
   availableQuantity Int           @default(1)
-  status       AssetStatus   @default(RECEIVED)
-  brand        String?
-  model        String?
-  serialNumber String?
-  condition    ItemCondition @default(WORKING)
-  remarks      String?
-  archivedAt   DateTime?
+  status            AssetStatus   @default(RECEIVED)
+  brand             String?
+  model             String?
+  serialNumber      String?
+  condition         ItemCondition @default(WORKING)
+  remarks           String?
+  archivedAt        DateTime?
 
-  labId        String
-  lab          Lab           @relation(fields: [labId], references: [id], onDelete: Cascade)
+  labId String
+  lab   Lab    @relation(fields: [labId], references: [id], onDelete: Cascade)
 
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  borrowLogs   BorrowLog[]
-  units     EquipmentUnit[]
+  borrowLogs BorrowLog[]
+  units      EquipmentUnit[]
 }
 
 model BorrowLog {
-  id          String        @id @default(uuid())
-  userId      String
-  user        User          @relation("Borrower", fields: [userId], references: [id])
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation("Borrower", fields: [userId], references: [id])
 
   equipmentId String
-  equipment   Equipment     @relation(fields: [equipmentId], references: [id])
+  equipment   Equipment @relation(fields: [equipmentId], references: [id])
 
   // Assigned when the Coordinator recommends (reserves) a specific unit.
-  unitId       String?
-  unit         EquipmentUnit? @relation("LogUnit", fields: [unitId], references: [id])
+  unitId      String?
+  unit        EquipmentUnit? @relation("LogUnit", fields: [unitId], references: [id])
   // Back-reference from the unit while this log holds it (reserved or issued).
-  holdingUnit  EquipmentUnit? @relation("UnitCurrentLog")
+  holdingUnit EquipmentUnit? @relation("UnitCurrentLog")
 
   // Recommendation ("approval") by the Coordinator
-  approvedById String?
-  approvedBy   User?        @relation("ApprovedBy", fields: [approvedById], references: [id])
-  approvedAt   DateTime?
+  approvedById         String?
+  approvedBy           User?     @relation("ApprovedBy", fields: [approvedById], references: [id])
+  approvedAt           DateTime?
   reservationExpiresAt DateTime?
 
   rejectedById    String?
@@ -188,41 +189,41 @@ model BorrowLog {
   rejectionReason String?
 
   cancelledById String?
-  cancelledBy   User?       @relation("CancelledBy", fields: [cancelledById], references: [id])
+  cancelledBy   User?     @relation("CancelledBy", fields: [cancelledById], references: [id])
   cancelledAt   DateTime?
   cancelReason  String?
 
-  expiredAt     DateTime?
+  expiredAt DateTime?
 
-  issuedById   String?
-  issuedBy     User?        @relation("IssuedBy", fields: [issuedById], references: [id])
-  issuedAt     DateTime?
-  issueNotes   String?
+  issuedById String?
+  issuedBy   User?     @relation("IssuedBy", fields: [issuedById], references: [id])
+  issuedAt   DateTime?
+  issueNotes String?
 
   // Return: TO inspects -> return code -> borrower acknowledges -> TO finalizes
-  returnInitiatedById String?
-  returnInitiatedBy   User?          @relation("ReturnInitiatedBy", fields: [returnInitiatedById], references: [id])
-  returnInitiatedAt   DateTime?
-  returnCondition     ItemCondition?
-  returnNotes         String?
-  returnAcknowledgedAt DateTime?
-  returnAckOverrideById String?
-  returnAckOverrideBy   User?        @relation("ReturnAckOverrideBy", fields: [returnAckOverrideById], references: [id])
+  returnInitiatedById     String?
+  returnInitiatedBy       User?          @relation("ReturnInitiatedBy", fields: [returnInitiatedById], references: [id])
+  returnInitiatedAt       DateTime?
+  returnCondition         ItemCondition?
+  returnNotes             String?
+  returnAcknowledgedAt    DateTime?
+  returnAckOverrideById   String?
+  returnAckOverrideBy     User?          @relation("ReturnAckOverrideBy", fields: [returnAckOverrideById], references: [id])
   returnAckOverrideReason String?
 
   returnedById String?
-  returnedBy   User?        @relation("ReturnedBy", fields: [returnedById], references: [id])
+  returnedBy   User?   @relation("ReturnedBy", fields: [returnedById], references: [id])
 
-  borrowDate  DateTime
-  returnDate  DateTime
+  borrowDate   DateTime
+  returnDate   DateTime
   actualReturn DateTime?
-  status      RequestStatus @default(PENDING)
-  notes       String?
+  status       RequestStatus @default(PENDING)
+  notes        String?
 
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  codes       ConfirmationCode[]
+  codes ConfirmationCode[]
 
   @@index([status])
   @@index([userId])
@@ -230,37 +231,37 @@ model BorrowLog {
 }
 
 model EquipmentUnit {
-  id           String        @id @default(uuid())
-  equipmentId  String
-  equipment    Equipment     @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
+  id          String    @id @default(uuid())
+  equipmentId String
+  equipment   Equipment @relation(fields: [equipmentId], references: [id], onDelete: Cascade)
 
   // Manufacturer serial, or a system-generated asset tag when the item has none
   // (serialIsPlaceholder = true). Unique, so each physical unit is identifiable at issue.
-  serialNumber String        @unique
-  serialIsPlaceholder Boolean @default(false)
-  status       UnitStatus    @default(AVAILABLE)
-  condition    ItemCondition @default(WORKING)
-  assetStatus  AssetStatus   @default(RECEIVED)
+  serialNumber        String        @unique
+  serialIsPlaceholder Boolean       @default(false)
+  status              UnitStatus    @default(AVAILABLE)
+  condition           ItemCondition @default(WORKING)
+  assetStatus         AssetStatus   @default(RECEIVED)
   // Why the unit is unavailable (set by staff or by a damaged return). Cleared when fit again.
-  unavailableReason String?
+  unavailableReason   String?
   // Persistent free-text remark about this unit (kept regardless of condition).
-  notes        String?
+  notes               String?
   // Where the unit physically is when not on loan (e.g. "Stores Room").
-  location     String?
-  purchasedAt  DateTime?
+  location            String?
+  purchasedAt         DateTime?
   // Last physical stock check.
-  lastCheckedAt DateTime?
-  archivedAt   DateTime?
+  lastCheckedAt       DateTime?
+  archivedAt          DateTime?
 
   // The single request/loan currently holding this unit (RESERVED or ISSUED).
   // Unique: a log can hold at most one unit and vice versa.
-  currentLogId String?       @unique
-  currentLog   BorrowLog?    @relation("UnitCurrentLog", fields: [currentLogId], references: [id], onDelete: SetNull)
+  currentLogId String?    @unique
+  currentLog   BorrowLog? @relation("UnitCurrentLog", fields: [currentLogId], references: [id], onDelete: SetNull)
 
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  borrowLogs   BorrowLog[]   @relation("LogUnit")
+  borrowLogs BorrowLog[] @relation("LogUnit")
 }
 
 enum CodePurpose {
@@ -313,4 +314,36 @@ model Notification {
   createdAt DateTime  @default(now())
 
   @@index([userId, readAt])
+}
+
+// Outcome of every email the app attempted to send (via the provider in lib/email.ts).
+// Records only metadata: the message body is never stored, so one-time codes in an
+// email never reach the database or logs. Nothing is recorded while email is disabled.
+enum EmailKind {
+  NOTIFICATION
+  HANDOVER_CODE
+}
+
+enum EmailStatus {
+  SENT
+  FAILED
+}
+
+model EmailDelivery {
+  id                String      @id @default(uuid())
+  userId            String?
+  user              User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  toEmail           String
+  // Set when EMAIL_TEST_RECIPIENT redirected the message (development only).
+  intendedEmail     String?
+  kind              EmailKind
+  subject           String
+  status            EmailStatus
+  providerMessageId String?
+  error             String?
+  logId             String?
+  createdAt         DateTime    @default(now())
+
+  @@index([createdAt])
+  @@index([userId])
 }
