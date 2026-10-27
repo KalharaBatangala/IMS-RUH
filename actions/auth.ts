@@ -131,7 +131,7 @@ export async function getPendingUsers() {
     await requireSuperAdmin();
     const users = await prisma.user.findMany({
       where: { isApproved: false },
-      select: { id: true, name: true, email: true, role: true, createdAt: true },
+      select: { id: true, name: true, email: true, role: true, isActive: true, createdAt: true, indexNumber: true, rosterVerifiedAt: true },
       orderBy: { createdAt: 'desc' },
     });
     return { success: true as const, users };

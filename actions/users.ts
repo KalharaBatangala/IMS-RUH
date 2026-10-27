@@ -34,6 +34,7 @@ export async function getUsers() {
         id: true,
         name: true,
         email: true,
+        indexNumber: true,
         role: true,
         isApproved: true,
         isActive: true,
@@ -59,7 +60,11 @@ export async function toggleUserApproval(userId: string, isApproved: boolean) {
     const session = await requireSuperAdmin();
     const user = await loadTarget(session.userId, userId);
     await prisma.$transaction(async (tx) => {
-      await tx.user.update({ where: { id: user.id }, data: { isApproved: Boolean(isApproved), sessionVersion: { increment: 1 } } });
+      await tx.user.update({
+        where: { id: user.id },
+        // Revoking also clears the roster mark so "Approve all verified" cannot silently re-approve.
+        data: { isApproved: Boolean(isApproved), sessionVersion: { increment: 1 }, ...(isApproved ? {} : { rosterVerifiedAt: null }) },
+      });
       await audit(tx, { actorId: session.userId, action: isApproved ? 'USER_APPROVED' : 'USER_APPROVAL_REVOKED', entityType: 'User', entityId: user.id });
     });
     if (isApproved) await notify([user.id], { title: 'Account approved', body: 'Your DEIE Labs account has been approved.' });

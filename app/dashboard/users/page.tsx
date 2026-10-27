@@ -112,7 +112,10 @@ export default function UsersPage() {
   }
 
   const filteredUsers = users.filter(
-    (u) => u.name.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase())
+    (u) =>
+      u.name.toLowerCase().includes(search.toLowerCase()) ||
+      u.email.toLowerCase().includes(search.toLowerCase()) ||
+      (u.indexNumber ?? '').toLowerCase().includes(search.toLowerCase())
   );
   const pendingCount = users.filter((u) => !u.isApproved).length;
 
@@ -132,7 +135,7 @@ export default function UsersPage() {
         </div>
         <input
           type="text"
-          placeholder="Search users by name or email..."
+          placeholder="Search by name, email or index no..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="px-3 py-2 border rounded-lg text-sm w-full md:w-72 outline-none focus:ring-2 focus:ring-blue-500"
@@ -165,6 +168,7 @@ export default function UsersPage() {
                       {u.name}
                       {isMe && <span className="ml-1 text-[10px] text-blue-600">(you)</span>}
                       <span className="block text-xs font-mono text-slate-400">{u.email}</span>
+                      {u.indexNumber && <span className="block text-[11px] font-mono text-slate-500">{u.indexNumber}</span>}
                     </td>
                     <td className="py-3 px-4">
                       <select

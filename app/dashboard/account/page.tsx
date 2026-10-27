@@ -130,8 +130,7 @@ export default function AccountPage() {
       <section className="bg-white border rounded-xl shadow-sm p-5 space-y-3">
         <h2 className="text-base font-bold text-slate-900">Two-factor authentication (2FA)</h2>
         <p className="text-sm text-slate-600">
-          Use an authenticator app (Google Authenticator, Microsoft Authenticator, etc.). The app works offline, so this
-          does not need internet access on the server.
+          Use an authenticator app (Google Authenticator, Microsoft Authenticator, etc.).
         </p>
 
         {twoFactorEnabled === null ? (

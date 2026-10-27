@@ -52,6 +52,11 @@ model User {
   failedLoginCount Int       @default(0)
   lockedUntil      DateTime?
 
+  // Student roster check: copied from the matching StudentRosterEntry when the Super Admin
+  // runs "Verify against roster", so it survives deletion of the uploaded file.
+  indexNumber      String?
+  rosterVerifiedAt DateTime?
+
   // 2FA / TOTP Fields
   twoFactorEnabled Boolean @default(false)
   twoFactorSecret  String?
@@ -75,6 +80,34 @@ model User {
   auditEvents      AuditLog[]
   notifications    Notification[]
   emailDeliveries  EmailDelivery[]
+  rostersUploaded  StudentRoster[]
+}
+
+// A student list (index number, name, email) uploaded by the Super Admin as CSV.
+// Reference data only: used to mark pending student registrations as verified.
+// Deleting a roster removes its entries; verified accounts keep their copied index number.
+model StudentRoster {
+  id           String   @id @default(uuid())
+  fileName     String
+  rowCount     Int
+  uploadedById String?
+  uploadedBy   User?    @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+
+  entries StudentRosterEntry[]
+}
+
+model StudentRosterEntry {
+  id          String        @id @default(uuid())
+  rosterId    String
+  roster      StudentRoster @relation(fields: [rosterId], references: [id], onDelete: Cascade)
+  indexNumber String
+  name        String
+  // Stored lower-case; matched against User.email.
+  email       String
+
+  @@unique([rosterId, email])
+  @@index([email])
 }
 
 // Legacy / unused (kept until removal is approved).
